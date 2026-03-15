@@ -139,17 +139,31 @@ LANGCHAIN_PROJECT=agentcorp
 
 ### Running it
 
-Start the API server and the UI in two terminals:
-
 ```bash
-# terminal 1
-uvicorn api.main:app --reload --port 8000
-
-# terminal 2
 streamlit run app.py
 ```
 
-UI is at `http://localhost:8501`. It talks to the API at `http://localhost:8000`.
+UI is at `http://localhost:8501`. The pipeline runs directly in the Streamlit process — no separate API server needed for local development.
+
+The FastAPI backend (`api/`) is still there if you want to use it as a standalone API:
+
+```bash
+uvicorn api.main:app --reload --port 8000
+```
+
+### Deploying to Streamlit Community Cloud
+
+1. Push the repo to GitHub
+2. Go to [share.streamlit.io](https://share.streamlit.io) and connect the repo
+3. Set the main file to `app.py`
+4. Add your secrets in the dashboard under **Settings → Secrets**:
+
+```toml
+TAVILY_API_KEY = "tvly-..."
+GROQ_API_KEY = "gsk_..."
+```
+
+That's it. Streamlit injects secrets as environment variables, so the pipeline picks them up automatically.
 
 ---
 

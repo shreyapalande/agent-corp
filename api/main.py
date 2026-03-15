@@ -13,9 +13,9 @@ from utils.tracing import configure_tracing
 configure_tracing()
 
 app = FastAPI(
-    title="AgentCorp Sales Intelligence API",
+    title="agent-corp API",
     version=settings.api_version,
-    description="Agentic B2B sales intelligence — powered by LangGraph, Tavily, and Groq.",
+    description="Company research pipeline — powered by LangGraph, Tavily, and Groq.",
 )
 
 _executor = ThreadPoolExecutor(max_workers=4)

@@ -1,15 +1,12 @@
 import streamlit as st
-import httpx
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timezone
 from utils.export import parse_confidence_scores, confidence_badge
 from utils.tracing import is_tracing_enabled, get_project_url, configure_tracing
-from api.config import settings
+from utils.cache import report_exists, load_report
 
 load_dotenv()
 configure_tracing()
-
-API_BASE = settings.api_base_url
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -150,8 +147,8 @@ def render_result_card(r: dict):
 
 def build_export_markdown(company: str, brief: str, sources: list[dict]) -> str:
     lines = [
-        f"# Sales Intelligence Brief — {company}",
-        f"*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')} by Agent Corp*",
+        f"# {company} — Research Brief",
+        f"*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')} by agent-corp*",
         "",
         brief,
         "",
@@ -165,18 +162,15 @@ def build_export_markdown(company: str, brief: str, sources: list[dict]) -> str:
 
 
 def check_cache(company: str) -> dict | None:
-    """GET /research/{company} — returns cached report dict or None."""
-    try:
-        resp = httpx.get(f"{API_BASE}/research/{company}", timeout=5)
-        if resp.status_code == 200:
-            return resp.json()
-        return None
-    except httpx.RequestError:
-        return None
+    """Return the cached report dict for a company, or None if not cached."""
+    if report_exists(company):
+        return load_report(company)
+    return None
 
 
 def run_pipeline(company_name: str) -> dict:
-    """POST /research — runs the full pipeline via the FastAPI backend."""
+    """Run the full LangGraph pipeline directly and return the final state."""
+    from agent.graph import build_graph
 
     # ── Pipeline progress UI (all nodes shown as running, then done) ─────────
     st.markdown("### ⚙️ Pipeline Running")
@@ -200,23 +194,24 @@ def run_pipeline(company_name: str) -> dict:
                 unsafe_allow_html=True,
             )
 
-    # ── Call the API (blocking — runs in the background via FastAPI thread pool)
-    try:
-        resp = httpx.post(
-            f"{API_BASE}/research",
-            json={"company": company_name},
-            timeout=120,
-        )
-        resp.raise_for_status()
-    except httpx.RequestError as e:
-        raise ConnectionError(
-            f"Cannot reach API at {API_BASE}. Is the server running?\n"
-            f"Start it with:  uvicorn api.main:app --reload\n\nDetail: {e}"
-        )
-    except httpx.HTTPStatusError as e:
-        raise RuntimeError(f"API error {e.response.status_code}: {e.response.text}")
-
-    data = resp.json()
+    # ── Run the graph ─────────────────────────────────────────────────────────
+    graph = build_graph()
+    state = graph.invoke({
+        "company_name": company_name,
+        "news_results": [],
+        "funding_results": [],
+        "techstack_results": [],
+        "competitor_results": [],
+        "people_results": [],
+        "product_results": [],
+        "brief": "",
+        "all_sources": [],
+        "is_first_run": False,
+        "cached_report": "",
+        "changes_detected": [],
+        "last_searched": "",
+        "validation_result": {},
+    })
 
     # ── Mark all nodes done ───────────────────────────────────────────────────
     for node_id, meta in NODE_META.items():
@@ -228,21 +223,19 @@ def run_pipeline(company_name: str) -> dict:
             unsafe_allow_html=True,
         )
 
-    # ── Map API response → final_state shape the rest of the UI expects ───────
-    raw = data.get("raw_results") or {}
     return {
-        "brief":             data.get("brief", ""),
-        "all_sources":       [dict(s) for s in data.get("sources", [])],
-        "changes_detected":  data.get("changes", []),
-        "is_first_run":      data.get("is_first_run", False),
-        "last_searched":     data.get("timestamp", ""),
-        "validation":        data.get("validation", {}),
-        "news_results":      raw.get("news", []),
-        "funding_results":   raw.get("funding", []),
-        "techstack_results": raw.get("techstack", []),
-        "competitor_results":raw.get("competitors", []),
-        "people_results":    raw.get("people", []),
-        "product_results":   raw.get("product", []),
+        "brief":             state.get("brief", ""),
+        "all_sources":       state.get("all_sources", []),
+        "changes_detected":  state.get("changes_detected", []),
+        "is_first_run":      state.get("is_first_run", False),
+        "last_searched":     state.get("last_searched", ""),
+        "validation":        state.get("validation_result", {}),
+        "news_results":      state.get("news_results", []),
+        "funding_results":   state.get("funding_results", []),
+        "techstack_results": state.get("techstack_results", []),
+        "competitor_results":state.get("competitor_results", []),
+        "people_results":    state.get("people_results", []),
+        "product_results":   state.get("product_results", []),
     }
 
 
@@ -251,7 +244,7 @@ def run_pipeline(company_name: str) -> dict:
 # Header
 st.markdown('<p class="hero-title">🔍 Agent Corp</p>', unsafe_allow_html=True)
 st.markdown(
-    '<p class="hero-sub">Enter a company name and get a full AI-powered sales brief in seconds — '
+    '<p class="hero-sub">Enter a company name and get a full research brief in under a minute — '
     "powered by Tavily, LangGraph & Groq/Llama-3.3</p>",
     unsafe_allow_html=True,
 )
@@ -383,7 +376,7 @@ if analyze_clicked:
         col_brief, col_meta = st.columns([3, 1])
 
         with col_brief:
-            st.markdown("## 📄 Sales Brief")
+            st.markdown("## 📄 Research Brief")
             sections = parse_confidence_scores(brief)
 
             if sections:
@@ -440,7 +433,7 @@ if analyze_clicked:
             st.download_button(
                 label="Download as Markdown",
                 data=export_md,
-                file_name=f"sales_brief_{company_name.lower().replace(' ', '_')}.md",
+                file_name=f"{company_name.lower().replace(' ', '_')}_brief.md",
                 mime="text/markdown",
                 use_container_width=True,
             )
@@ -502,13 +495,9 @@ if analyze_clicked:
                     unsafe_allow_html=True,
                 )
 
-    except ConnectionError as e:
-        st.error("**Cannot reach the API server.**")
-        st.code(str(e))
-        st.info("Start the backend with:  `uvicorn api.main:app --reload`")
     except ValueError as e:
         st.error(f"**Configuration error:** {e}")
-        st.info("Make sure your `.env` file has valid `TAVILY_API_KEY` and `GROQ_API_KEY` values.")
+        st.info("Make sure `TAVILY_API_KEY` and `GROQ_API_KEY` are set in your secrets.")
     except Exception as e:
         st.error(f"**Pipeline error:** {e}")
         st.exception(e)

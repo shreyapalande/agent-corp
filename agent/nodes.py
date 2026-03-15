@@ -1,16 +1,18 @@
 import os
 from tavily import TavilyClient
+from langsmith import traceable
+from api.config import settings
 from .state import AgentState
 from .prompts import SYNTHESIS_PROMPT
 
 
 def _get_tavily() -> TavilyClient:
-    api_key = os.getenv("TAVILY_API_KEY")
-    if not api_key:
+    if not settings.tavily_api_key:
         raise ValueError("TAVILY_API_KEY not set in environment")
-    return TavilyClient(api_key=api_key)
+    return TavilyClient(api_key=settings.tavily_api_key)
 
 
+@traceable(run_type="retriever", name="tavily_search")
 def _run_searches(
     client: TavilyClient,
     queries: list[str],
@@ -49,6 +51,26 @@ def _run_searches(
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results
+
+
+# ── Cache Loader Node ─────────────────────────────────────────────────────────
+
+def load_cache_node(state: AgentState) -> dict:
+    """Runs at START (in parallel with search nodes) to snapshot the old cache
+    into state BEFORE synthesize_node overwrites it."""
+    from utils.cache import load_report
+    from datetime import datetime, timezone
+
+    cached = load_report(state["company_name"])
+    if not cached:
+        return {
+            "cached_report": "",
+            "last_searched": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        }
+    return {
+        "cached_report": cached.get("brief", ""),
+        "last_searched": cached.get("timestamp", ""),
+    }
 
 
 # ── Search Nodes ──────────────────────────────────────────────────────────────
@@ -139,12 +161,40 @@ def product_node(state: AgentState) -> dict:
     return {"product_results": _run_searches(client, queries, domains, days=30)}
 
 
+# ── LLM Helpers (traceable) ───────────────────────────────────────────────────
+
+@traceable(run_type="llm", name="groq_synthesis")
+def _call_groq_synthesis(prompt: str, api_key: str) -> str:
+    """Calls Groq/Llama to synthesize the full sales brief. Traced as an LLM span."""
+    from groq import Groq
+    client = Groq(api_key=api_key)
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=4000,
+    )
+    return response.choices[0].message.content
+
+
+@traceable(run_type="llm", name="groq_change_detection")
+def _call_groq_change_detection(prompt: str, api_key: str) -> str:
+    """Calls Groq/Llama to diff old vs new news. Traced as an LLM span."""
+    from groq import Groq
+    client = Groq(api_key=api_key)
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=800,
+    )
+    return response.choices[0].message.content
+
+
 # ── Synthesis Node ────────────────────────────────────────────────────────────
 
 def synthesize_node(state: AgentState) -> dict:
-    from groq import Groq
-
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = settings.groq_api_key
     if not api_key:
         raise ValueError("GROQ_API_KEY not set in environment")
 
@@ -188,15 +238,7 @@ def synthesize_node(state: AgentState) -> dict:
         product_section=_format_section(state.get("product_results", [])),
     )
 
-    client = Groq(api_key=api_key)
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=4000,
-    )
-
-    brief = response.choices[0].message.content
+    brief = _call_groq_synthesis(prompt, api_key)
 
     # Persist to cache
     from utils.export import parse_confidence_scores
@@ -210,33 +252,26 @@ def synthesize_node(state: AgentState) -> dict:
 # ── Change Detection Node ─────────────────────────────────────────────────────
 
 def change_detection_node(state: AgentState) -> dict:
-    from groq import Groq
-    from utils.cache import load_report, report_exists
-    from datetime import datetime, timezone
+    # Use the old brief that load_cache_node stashed in state BEFORE
+    # synthesize_node overwrote the cache file — this is the correct prior snapshot.
+    old_brief = state.get("cached_report", "")
+    last_searched = state.get("last_searched", "")
 
-    company = state["company_name"]
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-    # Load the *previous* cache (saved before this run's synthesize_node overwrote it)
-    # synthesize_node already saved the new report, so we compare new news vs cached news section
-    cached = load_report(company)
-
-    # On first run there is no prior cache to compare against
-    if not cached or not cached.get("sections"):
+    # No previous cache means this is the first run
+    if not old_brief:
         return {
             "is_first_run": True,
-            "cached_report": "",
             "changes_detected": [],
-            "last_searched": timestamp,
         }
 
-    old_news = cached["sections"].get("Recent Activity & Sales Triggers", "")
-    if not old_news:
-        # Try alternate heading names the LLM may have used
-        for key in cached["sections"]:
-            if "news" in key.lower() or "activity" in key.lower() or "trigger" in key.lower():
-                old_news = cached["sections"][key]
-                break
+    # Extract old news section from the cached brief text
+    import re
+    old_news = ""
+    news_match = re.search(
+        r"##\s+Recent Activity.*?\n(.*?)(?=\n##|\Z)", old_brief, re.DOTALL | re.IGNORECASE
+    )
+    if news_match:
+        old_news = news_match.group(1).strip()
 
     new_news_results = state.get("news_results", [])
     new_news = "\n\n".join(
@@ -246,9 +281,7 @@ def change_detection_node(state: AgentState) -> dict:
     if not old_news or not new_news:
         return {
             "is_first_run": False,
-            "cached_report": cached.get("brief", ""),
             "changes_detected": [],
-            "last_searched": cached.get("timestamp", "unknown"),
         }
 
     change_prompt = (
@@ -264,16 +297,8 @@ def change_detection_node(state: AgentState) -> dict:
         "If nothing meaningful changed, say exactly: No significant changes detected."
     )
 
-    api_key = os.getenv("GROQ_API_KEY")
-    client = Groq(api_key=api_key)
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": change_prompt}],
-        temperature=0.2,
-        max_tokens=800,
-    )
-
-    raw = response.choices[0].message.content.strip()
+    api_key = settings.groq_api_key
+    raw = _call_groq_change_detection(change_prompt, api_key).strip()
 
     if "no significant changes detected" in raw.lower():
         changes: list[str] = []
@@ -288,7 +313,5 @@ def change_detection_node(state: AgentState) -> dict:
 
     return {
         "is_first_run": False,
-        "cached_report": cached.get("brief", ""),
         "changes_detected": changes,
-        "last_searched": cached.get("timestamp", "unknown"),
     }

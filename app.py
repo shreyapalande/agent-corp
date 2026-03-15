@@ -1,9 +1,15 @@
 import streamlit as st
+import httpx
 from dotenv import load_dotenv
 from datetime import datetime
 from utils.export import parse_confidence_scores, confidence_badge
+from utils.tracing import is_tracing_enabled, get_project_url, configure_tracing
+from api.config import settings
 
 load_dotenv()
+configure_tracing()
+
+API_BASE = settings.api_base_url
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -157,75 +163,85 @@ def build_export_markdown(company: str, brief: str, sources: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def run_pipeline(company_name: str):
-    """Stream the LangGraph pipeline and update the UI in real-time."""
-    from agent.graph import build_graph
+def check_cache(company: str) -> dict | None:
+    """GET /research/{company} — returns cached report dict or None."""
+    try:
+        resp = httpx.get(f"{API_BASE}/research/{company}", timeout=5)
+        if resp.status_code == 200:
+            return resp.json()
+        return None
+    except httpx.RequestError:
+        return None
 
-    graph = build_graph()
 
-    initial_state = {
-        "company_name": company_name,
-        "news_results": [],
-        "funding_results": [],
-        "techstack_results": [],
-        "competitor_results": [],
-        "people_results": [],
-        "product_results": [],
-        "brief": "",
-        "all_sources": [],
-        "is_first_run": False,
-        "cached_report": "",
-        "changes_detected": [],
-        "last_searched": "",
-    }
+def run_pipeline(company_name: str) -> dict:
+    """POST /research — runs the full pipeline via the FastAPI backend."""
 
-    # ── Pipeline progress UI ─────────────────────────────────────────────────
+    # ── Pipeline progress UI (all nodes shown as running, then done) ─────────
     st.markdown("### ⚙️ Pipeline Running")
     progress_cols = st.columns(3)
 
-    node_placeholders: dict = {}
     col_map = {
         "news_node": 0, "funding_node": 0, "techstack_node": 0,
         "competitor_node": 1, "people_node": 1, "product_node": 1,
         "synthesize_node": 2, "change_detection_node": 2,
     }
+    node_placeholders: dict = {}
     for node_id, meta in NODE_META.items():
         col = progress_cols[col_map[node_id]]
         with col:
             node_placeholders[node_id] = st.empty()
             node_placeholders[node_id].markdown(
-                f'<div class="node-card">'
+                f'<div class="node-card running">'
                 f'<span style="font-size:1.2rem">{meta["icon"]}</span>'
-                f'<span style="color:#9ca3af">⏳ {meta["label"]}</span>'
+                f'<span style="color:#4f46e5">⏳ {meta["label"]}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
 
-    completed_nodes: set[str] = set()
-    final_state: dict = {}
+    # ── Call the API (blocking — runs in the background via FastAPI thread pool)
+    try:
+        resp = httpx.post(
+            f"{API_BASE}/research",
+            json={"company": company_name},
+            timeout=120,
+        )
+        resp.raise_for_status()
+    except httpx.RequestError as e:
+        raise ConnectionError(
+            f"Cannot reach API at {API_BASE}. Is the server running?\n"
+            f"Start it with:  uvicorn api.main:app --reload\n\nDetail: {e}"
+        )
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(f"API error {e.response.status_code}: {e.response.text}")
 
-    # ── Stream events ────────────────────────────────────────────────────────
-    for event in graph.stream(initial_state, stream_mode="updates"):
-        for node_name, node_output in event.items():
-            if node_name == "__end__":
-                continue
+    data = resp.json()
 
-            # Mark node as done in the UI
-            if node_name in NODE_META:
-                completed_nodes.add(node_name)
-                meta = NODE_META[node_name]
-                node_placeholders[node_name].markdown(
-                    f'<div class="node-card done">'
-                    f'<span style="font-size:1.2rem">{meta["icon"]}</span>'
-                    f'<span style="color:#059669">✅ {meta["label"]}</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+    # ── Mark all nodes done ───────────────────────────────────────────────────
+    for node_id, meta in NODE_META.items():
+        node_placeholders[node_id].markdown(
+            f'<div class="node-card done">'
+            f'<span style="font-size:1.2rem">{meta["icon"]}</span>'
+            f'<span style="color:#059669">✅ {meta["label"]}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
-            # Accumulate state
-            final_state.update(node_output)
-
-    return final_state
+    # ── Map API response → final_state shape the rest of the UI expects ───────
+    raw = data.get("raw_results") or {}
+    return {
+        "brief":             data.get("brief", ""),
+        "all_sources":       [dict(s) for s in data.get("sources", [])],
+        "changes_detected":  data.get("changes", []),
+        "is_first_run":      data.get("is_first_run", False),
+        "last_searched":     data.get("timestamp", ""),
+        "news_results":      raw.get("news", []),
+        "funding_results":   raw.get("funding", []),
+        "techstack_results": raw.get("techstack", []),
+        "competitor_results":raw.get("competitors", []),
+        "people_results":    raw.get("people", []),
+        "product_results":   raw.get("product", []),
+    }
 
 
 # ── App Layout ────────────────────────────────────────────────────────────────
@@ -263,6 +279,23 @@ st.markdown(
 )
 
 st.markdown("---")
+
+# ── Cache check on input ───────────────────────────────────────────────────────
+if company_name.strip() and not analyze_clicked:
+    cached_preview = check_cache(company_name.strip())
+    if cached_preview:
+        ts = cached_preview.get("timestamp", "")
+        formatted = ts.replace("T", " ").split(".")[0] if "T" in ts else ts
+        st.markdown(
+            '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;'
+            'padding:10px 16px;font-size:0.88rem;color:#1d4ed8;margin-bottom:8px;">'
+            f"💾 Cached report found from <strong>{formatted}</strong> — "
+            "click <strong>Analyze →</strong> to run a fresh search, or scroll down to view cached brief."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        with st.expander("📋 View cached brief", expanded=False):
+            st.markdown(cached_preview.get("brief", ""))
 
 # ── Run pipeline ──────────────────────────────────────────────────────────────
 if analyze_clicked:
@@ -382,6 +415,25 @@ if analyze_clicked:
                 use_container_width=True,
             )
 
+            # Tracing
+            st.markdown("### 🔬 Tracing")
+            if is_tracing_enabled():
+                st.success("LangSmith active", icon="✅")
+                st.markdown(
+                    f"[View traces →]({get_project_url()})",
+                    unsafe_allow_html=False,
+                )
+                st.caption(
+                    "Every node, Tavily query, and LLM call is logged "
+                    "with latency and token usage."
+                )
+            else:
+                st.warning("Tracing off", icon="⚠️")
+                st.caption(
+                    "Add `LANGCHAIN_TRACING_V2=true` and "
+                    "`LANGCHAIN_API_KEY` to `.env` to enable LangSmith tracing."
+                )
+
         # ── Raw data tabs ──────────────────────────────────────────────────────
         st.markdown("---")
         st.markdown("## 🗂️ Raw Intelligence Data")
@@ -420,6 +472,10 @@ if analyze_clicked:
                     unsafe_allow_html=True,
                 )
 
+    except ConnectionError as e:
+        st.error("**Cannot reach the API server.**")
+        st.code(str(e))
+        st.info("Start the backend with:  `uvicorn api.main:app --reload`")
     except ValueError as e:
         st.error(f"**Configuration error:** {e}")
         st.info("Make sure your `.env` file has valid `TAVILY_API_KEY` and `GROQ_API_KEY` values.")

@@ -42,14 +42,14 @@ node   node      node       node      node    node
 
 ### The 6 Search Nodes
 
-| Node | What It Searches | Sources | Time Window |
-|------|-----------------|---------|-------------|
-| `news_node` | Announcements, press releases, launches | TechCrunch, Reuters, Bloomberg, Forbes, Wired... | 7 days |
-| `funding_node` | Funding rounds, investors, valuations | Crunchbase, PitchBook, Tracxn, SEC filings... | 90 days |
-| `techstack_node` | Tech stack, engineering blog, job postings | StackShare, GitHub, dev.to, BuiltWith... | 180 days |
-| `competitor_node` | Competitors, market positioning | G2, Capterra, Gartner, SimilarWeb... | 30 days |
-| `people_node` | Executives, leadership changes | LinkedIn, Crunchbase, Forbes, Substack... | 30 days |
-| `product_node` | Reviews, user sentiment, pricing | Product Hunt, G2, Capterra, Reddit, Trustpilot... | 30 days |
+| Node              | What It Searches                           | Sources                                           | Time Window |
+| ----------------- | ------------------------------------------ | ------------------------------------------------- | ----------- |
+| `news_node`       | Announcements, press releases, launches    | TechCrunch, Reuters, Bloomberg, Forbes, Wired...  | 7 days      |
+| `funding_node`    | Funding rounds, investors, valuations      | Crunchbase, PitchBook, Tracxn, SEC filings...     | 90 days     |
+| `techstack_node`  | Tech stack, engineering blog, job postings | StackShare, GitHub, dev.to, BuiltWith...          | 180 days    |
+| `competitor_node` | Competitors, market positioning            | G2, Capterra, Gartner, SimilarWeb...              | 30 days     |
+| `people_node`     | Executives, leadership changes             | LinkedIn, Crunchbase, Forbes, Substack...         | 30 days     |
+| `product_node`    | Reviews, user sentiment, pricing           | Product Hunt, G2, Capterra, Reddit, Trustpilot... | 30 days     |
 
 Each node runs **simultaneously** via LangGraph's parallel fan-out. All results feed into `synthesize_node`, which waits for all 6 to complete before running.
 
@@ -73,13 +73,13 @@ On every run, the synthesized brief is cached locally (`/cache/<company>.json`).
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
+| Layer               | Technology                                             |
+| ------------------- | ------------------------------------------------------ |
 | Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) |
-| Web search | [Tavily API](https://tavily.com) |
-| LLM synthesis | [Groq](https://groq.com) + Llama-3.3-70b-versatile |
-| UI | [Streamlit](https://streamlit.io) |
-| Caching | Local JSON (`/cache`) |
+| Web search          | [Tavily API](https://tavily.com)                       |
+| LLM synthesis       | [Groq](https://groq.com) + Llama-3.3-70b-versatile     |
+| UI                  | [Streamlit](https://streamlit.io)                      |
+| Caching             | Local JSON (`/cache`)                                  |
 
 ---
 
@@ -175,10 +175,10 @@ Each section ends with a **Confidence score (1–5)** based on source quality an
 
 A typical run makes ~12 Tavily searches and 2 Groq calls (synthesis + change detection).
 
-| Service | Usage per run | Cost |
-|---------|--------------|------|
-| Tavily | ~12 searches | Free tier: 1,000/month |
-| Groq (Llama-3.3-70b) | ~6,000 tokens in / ~4,500 out | Free tier available |
+| Service              | Usage per run                 | Cost                   |
+| -------------------- | ----------------------------- | ---------------------- |
+| Tavily               | ~12 searches                  | Free tier: 1,000/month |
+| Groq (Llama-3.3-70b) | ~6,000 tokens in / ~4,500 out | Free tier available    |
 
 ---
 
@@ -191,7 +191,3 @@ A typical run makes ~12 Tavily searches and 2 Groq calls (synthesis + change det
 - No authentication or multi-user support
 
 ---
-
-## License
-
-MIT

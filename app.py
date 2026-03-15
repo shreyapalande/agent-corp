@@ -1,4 +1,16 @@
+import os
 import streamlit as st
+
+# Inject Streamlit secrets into os.environ before any other module is imported.
+# pydantic-settings (and anything else that reads os.environ) will then pick
+# them up correctly whether running locally or on Streamlit Community Cloud.
+try:
+    for _k, _v in st.secrets.items():
+        if isinstance(_v, str):
+            os.environ.setdefault(_k, _v)
+except Exception:
+    pass  # no secrets.toml locally — .env is used instead
+
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 from utils.export import parse_confidence_scores, confidence_badge

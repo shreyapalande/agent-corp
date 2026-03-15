@@ -29,8 +29,14 @@ env/
 .DS_Store
 Thumbs.db
 
-# Memory (local only)
-memory/
+# Cache (local report store)
+cache/
 
 # Logs
 logs/
+
+# Pytest
+.pytest_cache/
+
+# Memory (local only)
+memory/

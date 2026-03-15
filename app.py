@@ -346,40 +346,11 @@ if analyze_clicked:
                 unsafe_allow_html=True,
             )
 
-        # ── Validation banner ─────────────────────────────────────────────────
+        # ── Validation details ────────────────────────────────────────────────
         vr = final_state.get("validation", {})
-        v_score = vr.get("overall_score", 1.0)
         v_ungrounded = vr.get("ungrounded_claims", [])
         v_incomplete = vr.get("incomplete_sections", [])
         v_no_data = vr.get("no_data_sections", [])
-
-        if v_score >= 0.8:
-            st.markdown(
-                '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;'
-                'padding:10px 18px;font-size:0.9rem;color:#166534;margin:8px 0;">'
-                f"🟢 <strong>High confidence report</strong> — all claims grounded in sources "
-                f"<span style='float:right;font-weight:600;'>Score: {v_score:.0%}</span>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-        elif v_score >= 0.6:
-            st.markdown(
-                '<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;'
-                'padding:10px 18px;font-size:0.9rem;color:#92400e;margin:8px 0;">'
-                f"🟡 <strong>Moderate confidence</strong> — some claims could not be verified "
-                f"<span style='float:right;font-weight:600;'>Score: {v_score:.0%}</span>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;'
-                'padding:10px 18px;font-size:0.9rem;color:#991b1b;margin:8px 0;">'
-                f"🔴 <strong>Low confidence</strong> — verify key claims manually before use "
-                f"<span style='float:right;font-weight:600;'>Score: {v_score:.0%}</span>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
 
         # Detail expander: show ungrounded claims, incomplete/no-data sections
         detail_items = len(v_ungrounded) + len(v_incomplete) + len(v_no_data)

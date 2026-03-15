@@ -26,27 +26,105 @@ REQUIRED_SECTIONS = [
 ]
 
 _GROUNDING_PROMPT = """\
-You are a fact-checking assistant.
+You are a fact-checking agent. Your job is to check if a claim \
+is reasonably supported by the provided sources.
 
-Below is a sales intelligence brief about a company, followed by the raw source snippets \
-that were used to write it.
+A claim is GROUNDED if:
+- The information is directly stated in the sources, OR
+- The information can be reasonably inferred from the sources, OR
+- It is a general summary of what multiple sources say
 
-Your job: identify claims in the brief that are NOT supported by any of the sources.
-A claim is ungrounded if it asserts a specific fact (number, event, name, date, product) \
-that does not appear in any source snippet.
+A claim is UNGROUNDED only if:
+- It directly contradicts the sources, OR
+- It introduces specific facts (numbers, dates, names) that appear \
+  nowhere in the sources
 
-Return ONLY a JSON array of short quoted claim strings that are ungrounded.
-If every claim is supported, return an empty array: []
+Claim: {sentence}
+Sources: {tavily_results}
 
-Example output:
-["The company raised $50M in Series C", "CEO John Smith joined in 2023"]
-
-Brief:
-{brief}
-
-Sources:
-{sources}
+Reply with only: GROUNDED or UNGROUNDED\
 """
+
+# Sections whose claims are sent to the grounding check
+_GROUNDING_SECTIONS = frozenset({"Funding & Growth", "Key People", "Recent Signals"})
+
+# Sentence-opening phrases that signal a summary or connector — not checkable facts
+_TRANSITION_PHRASES = (
+    "overall",
+    "in summary",
+    "additionally",
+    "furthermore",
+    "based on",
+)
+
+# Minimum word count for a sentence to be worth checking
+_MIN_WORDS = 8
+
+
+def _is_grounding_section(heading: str) -> bool:
+    """Return True if heading text matches one of the grounding target sections."""
+    heading_lower = heading.lower()
+    return any(s.lower() in heading_lower for s in _GROUNDING_SECTIONS)
+
+
+def _should_skip(sentence: str) -> bool:
+    """Return True if a sentence should be excluded from grounding checks."""
+    if len(sentence.split()) < _MIN_WORDS:
+        return True
+    lower = sentence.lower()
+    return any(lower.startswith(p) for p in _TRANSITION_PHRASES)
+
+
+def _extract_claims(brief: str, max_claims: int) -> list[str]:
+    """
+    Pull individual checkable claims from the grounding-target sections only.
+
+    Sections checked:   Funding & Growth, Key People, Recent Signals
+    Sections skipped:   Company Snapshot, Tech Stack, Competitor Context (and any other)
+
+    Within target sections, each claim is also skipped when:
+    - It has fewer than _MIN_WORDS words
+    - It starts with a transition phrase (Overall, In summary, Additionally, …)
+    """
+    import re
+    claims: list[str] = []
+    in_target_section = False
+
+    for line in brief.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        # Detect section heading and update scope
+        if line.startswith("#"):
+            heading = line.lstrip("#").strip()
+            in_target_section = _is_grounding_section(heading)
+            logger.debug(
+                "_extract_claims | heading=%r | in_target_section=%s",
+                heading,
+                in_target_section,
+            )
+            continue
+
+        if not in_target_section:
+            continue
+
+        # Split line into candidate sentences
+        if line[:1] in ("-", "*", "•", "+"):
+            candidates = [line.lstrip("-*•+ ").strip()]
+        else:
+            candidates = re.split(r"(?<=[.!?])\s+", line)
+
+        for sentence in candidates:
+            sentence = sentence.strip()
+            if _should_skip(sentence):
+                logger.debug("_extract_claims | skipped=%r", sentence[:60])
+                continue
+            claims.append(sentence)
+            if len(claims) >= max_claims:
+                return claims
+
+    return claims
 
 
 # ── Check 1: Source Grounding ─────────────────────────────────────────────────
@@ -55,69 +133,98 @@ def check_source_grounding(
     brief: str,
     all_sources: list[dict],
     groq_api_key: str,
-    max_sources: int = 20,
-) -> list[str]:
+    max_sources: int = 15,
+    max_claims: int = 20,
+) -> tuple[list[str], int]:
     """
-    Ask Groq to identify claims in the brief that cannot be traced to any source.
-    Returns a list of ungrounded claim strings.
+    Check each extracted claim individually against the Tavily sources.
+
+    Only claims from Funding & Growth, Key People, and Recent Signals sections
+    are checked. Short sentences and transition phrases are skipped before any
+    API call is made.
+
+    Returns:
+        (ungrounded_claims, checked_count)
+        - ungrounded_claims: list of claim strings judged UNGROUNDED
+        - checked_count: number of claims that were actually sent to Groq
+          (used as the denominator for the grounding score)
     """
     if not groq_api_key or not brief or not all_sources:
         logger.debug("check_source_grounding | skipped (missing api_key, brief, or sources)")
-        return []
+        return [], 0
 
-    source_text = "\n\n".join(
-        f"[{i+1}] {s.get('title', '')}: {s.get('content', '')[:400]}"
+    claims = _extract_claims(brief, max_claims)
+    if not claims:
+        logger.debug("check_source_grounding | no checkable claims extracted from brief")
+        return [], 0
+
+    # Build the sources block once and reuse it for every claim
+    tavily_results = "\n".join(
+        f"[{i+1}] {s.get('title', '')}: {s.get('content', '')[:300]}"
         for i, s in enumerate(all_sources[:max_sources])
     )
 
-    prompt = _GROUNDING_PROMPT.format(brief=brief[:6000], sources=source_text)
     logger.debug(
-        "check_source_grounding | sources_sent=%d | brief_chars=%d",
+        "check_source_grounding | claims_to_check=%d | sources_in_context=%d",
+        len(claims),
         min(len(all_sources), max_sources),
-        len(brief[:6000]),
     )
 
-    try:
-        from groq import Groq
-        import json
+    from groq import Groq
+    client = Groq(api_key=groq_api_key)
 
-        client = Groq(api_key=groq_api_key)
-        t0 = time.perf_counter()
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=600,
+    ungrounded: list[str] = []
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    t_start = time.perf_counter()
+
+    for claim in claims:
+        prompt = _GROUNDING_PROMPT.format(
+            sentence=claim,
+            tavily_results=tavily_results,
         )
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        usage = response.usage
-        logger.info(
-            "LLM call | fn=groq_grounding_check | model=llama-3.3-70b-versatile"
-            " | prompt_tokens=%d | completion_tokens=%d | total_tokens=%d | elapsed_ms=%.0f",
-            usage.prompt_tokens,
-            usage.completion_tokens,
-            usage.total_tokens,
-            elapsed_ms,
-        )
+        try:
+            t0 = time.perf_counter()
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=10,  # only "GROUNDED" or "UNGROUNDED" needed
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            usage = response.usage
+            total_prompt_tokens += usage.prompt_tokens
+            total_completion_tokens += usage.completion_tokens
 
-        raw = response.choices[0].message.content.strip()
+            verdict = response.choices[0].message.content.strip().upper()
+            logger.debug(
+                "grounding_check | verdict=%s | elapsed_ms=%.0f | claim=%r",
+                verdict,
+                elapsed_ms,
+                claim[:80],
+            )
 
-        # Extract the JSON array even if there's surrounding text
-        start = raw.find("[")
-        end = raw.rfind("]") + 1
-        if start == -1 or end == 0:
-            logger.debug("check_source_grounding | no JSON array in response")
-            return []
+            if "UNGROUNDED" in verdict:
+                ungrounded.append(claim)
 
-        claims = json.loads(raw[start:end])
-        ungrounded = [c for c in claims if isinstance(c, str) and c.strip()]
-        logger.debug(
-            "check_source_grounding | ungrounded_claims=%d", len(ungrounded)
-        )
-        return ungrounded
-    except Exception as e:
-        logger.error("check_source_grounding | failed | error=%s", e)
-        return []
+        except Exception as e:
+            logger.error(
+                "grounding_check | failed | claim=%r | error=%s", claim[:80], e
+            )
+
+    total_elapsed_ms = (time.perf_counter() - t_start) * 1000
+    logger.info(
+        "LLM call | fn=groq_grounding_check | model=llama-3.3-70b-versatile"
+        " | claims_checked=%d | ungrounded=%d"
+        " | prompt_tokens=%d | completion_tokens=%d | total_tokens=%d | elapsed_ms=%.0f",
+        len(claims),
+        len(ungrounded),
+        total_prompt_tokens,
+        total_completion_tokens,
+        total_prompt_tokens + total_completion_tokens,
+        total_elapsed_ms,
+    )
+    return ungrounded, len(claims)
 
 
 # ── Check 2: Completeness ─────────────────────────────────────────────────────
@@ -183,32 +290,40 @@ def validate_report(
     Run all three checks and return a ValidationResult.
 
     Scoring:
-    - Starts at 1.0
-    - Each ungrounded claim  → -0.05 (capped at -0.30)
+    - Grounding base: grounded_count / checked_count
+      (only sentences actually sent to Groq count; skipped sentences
+       are excluded from both numerator and denominator)
     - Each missing section   → -0.10
     - Each no-data dimension → -0.05
     """
     logger.debug("validate_report | starting all checks")
 
-    ungrounded = check_source_grounding(brief, all_sources, groq_api_key)
+    ungrounded, checked_count = check_source_grounding(brief, all_sources, groq_api_key)
     incomplete = check_completeness(brief)
     no_data = check_staleness(
         news_results, funding_results, techstack_results,
         competitor_results, people_results, product_results,
     )
 
-    penalty = 0.0
-    penalty += min(len(ungrounded) * 0.05, 0.30)
-    penalty += len(incomplete) * 0.10
-    penalty += len(no_data) * 0.05
+    # Grounding score: ratio of checked claims that passed
+    if checked_count > 0:
+        grounding_score = (checked_count - len(ungrounded)) / checked_count
+    else:
+        grounding_score = 1.0  # nothing was checkable → no deduction
 
-    score = max(0.0, round(1.0 - penalty, 2))
+    # Structural penalties applied on top of the grounding score
+    penalty = len(incomplete) * 0.10 + len(no_data) * 0.05
+    score = max(0.0, round(grounding_score - penalty, 2))
     is_valid = score >= 0.6 and not incomplete
 
     logger.debug(
-        "validate_report | score=%.2f | penalty=%.2f | is_valid=%s",
-        score,
+        "validate_report | grounding_score=%.2f | checked=%d | ungrounded=%d"
+        " | penalty=%.2f | score=%.2f | is_valid=%s",
+        grounding_score,
+        checked_count,
+        len(ungrounded),
         penalty,
+        score,
         is_valid,
     )
     return ValidationResult(

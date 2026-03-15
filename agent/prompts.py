@@ -60,4 +60,18 @@ Now generate a structured sales brief. Be specific, cite concrete facts from the
 1. [Specific action with context]
 2. [Specific action with context]
 3. [Specific action with context]
+
+---
+
+After writing each section above, append a confidence score on its own line in this exact format:
+Confidence: X/5 — [one sentence explaining why]
+
+Score based on:
+- 5: Multiple strong sources, very recent, consistent info
+- 4: Good sources, mostly recent
+- 3: Some sources but gaps or older data
+- 2: Thin coverage, mostly inferred
+- 1: Almost no data found, highly uncertain
+
+Apply this to every section: Company Overview, Recent Activity & Sales Triggers, Financial Health & Growth Stage, Tech Stack & Infrastructure Insights, Product & User Sentiment, Competitive Position, Key Decision Makers, Sales Opportunity Assessment, and Recommended Outreach Strategy.
 """

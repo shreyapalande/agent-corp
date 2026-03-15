@@ -1,6 +1,7 @@
 import streamlit as st
 from dotenv import load_dotenv
 from datetime import datetime
+from utils.export import parse_confidence_scores, confidence_badge
 
 load_dotenv()
 
@@ -281,10 +282,40 @@ if analyze_clicked:
 
         with col_brief:
             st.markdown("## 📄 Sales Brief")
-            st.markdown(
-                f'<div class="brief-box">{brief}</div>',
-                unsafe_allow_html=True,
-            )
+            sections = parse_confidence_scores(brief)
+
+            if sections:
+                for heading, data in sections.items():
+                    score = data["score"]
+                    reason = data["reason"]
+                    content = data["content"]
+
+                    color, label, warning = confidence_badge(score, reason)
+
+                    # Render section content as markdown
+                    st.markdown(content)
+
+                    # Confidence badge line
+                    badge_html = (
+                        f'<span style="display:inline-block;background:{color}22;'
+                        f'border:1px solid {color};border-radius:6px;'
+                        f'padding:2px 10px;font-size:0.8rem;color:{color};'
+                        f'font-weight:600;">Confidence: {label}</span>'
+                    )
+                    if reason:
+                        badge_html += (
+                            f'<span style="font-size:0.82rem;color:#6b7280;'
+                            f'margin-left:8px;">— {reason}</span>'
+                        )
+                    st.markdown(badge_html, unsafe_allow_html=True)
+
+                    if warning:
+                        st.warning(f"⚠️ {warning}", icon=None)
+
+                    st.markdown("")
+            else:
+                # Fallback: render brief as-is if parsing finds no sections
+                st.markdown(brief)
 
         with col_meta:
             st.markdown("### 📊 Run Stats")

@@ -1,26 +1,26 @@
-# AgentCorp — B2B Sales Intelligence Agent
+# agent-corp
 
-An agentic pipeline that autonomously gathers real-time intelligence on any company and synthesizes it into a structured sales brief. Built with LangGraph, Tavily, Groq, FastAPI, and Streamlit.
-
----
-
-## Demo
-
-Enter a company name → the agent runs 6 parallel searches across distinct intelligence dimensions → Groq/Llama-3.3 synthesizes everything into a validated, actionable sales brief with confidence scores.
+Give it a company name. It searches the web across 6 different angles simultaneously, pulls everything together with an LLM, and spits out a structured research brief. Built with LangGraph, Tavily, Groq, FastAPI, and Streamlit.
 
 ---
 
-## How It Works
+## What it does
+
+Type in a company name. The agent kicks off 6 searches in parallel — news, funding, tech stack, competitors, key people, product reviews — waits for them all to finish, then hands everything to Groq/Llama-3.3 to synthesize into a clean brief. It also checks whether the brief actually holds up against the sources it pulled.
+
+---
+
+## How it works
 
 ```
-User Input (company name)
-         │
-         ▼
-    LangGraph Graph
-         │
-  ┌──────┴────────────────────────────────────────────┐
-  │               Fan-out (parallel)                  │
-  ▼      ▼       ▼          ▼        ▼      ▼         ▼
+company name
+      │
+      ▼
+ LangGraph graph
+      │
+  ┌───┴──────────────────────────────────────────────┐
+  │              all run in parallel                 │
+  ▼      ▼       ▼          ▼        ▼      ▼        ▼
 load  news  funding  techstack  competitor  people  product
 cache  node   node      node       node      node    node
   │      │       │         │           │       │       │
@@ -40,147 +40,135 @@ cache  node   node      node       node      node    node
                 (diff vs cached report)
                            │
                            ▼
-               Sales Brief + Validation + Changes
+                    brief + changes
 ```
 
-### The 6 Search Nodes
+### The 6 search nodes
 
-| Node              | What It Searches                           | Sources                                           | Time Window |
-| ----------------- | ------------------------------------------ | ------------------------------------------------- | ----------- |
-| `news_node`       | Announcements, press releases, launches    | TechCrunch, Reuters, Bloomberg, Forbes, Wired...  | 7 days      |
-| `funding_node`    | Funding rounds, investors, valuations      | Crunchbase, PitchBook, Tracxn, SEC filings...     | 90 days     |
-| `techstack_node`  | Tech stack, engineering blog, job postings | StackShare, GitHub, dev.to, BuiltWith...          | 180 days    |
-| `competitor_node` | Competitors, market positioning            | G2, Capterra, Gartner, SimilarWeb...              | 30 days     |
-| `people_node`     | Executives, leadership changes             | LinkedIn, Crunchbase, Forbes, Substack...         | 30 days     |
-| `product_node`    | Reviews, user sentiment, pricing           | Product Hunt, G2, Capterra, Reddit, Trustpilot... | 30 days     |
+| Node              | What it looks for                          | Where it looks                                    | How far back |
+| ----------------- | ------------------------------------------ | ------------------------------------------------- | ------------ |
+| `news_node`       | Announcements, press releases, launches    | TechCrunch, Reuters, Bloomberg, Forbes, Wired...  | 7 days       |
+| `funding_node`    | Funding rounds, investors, valuations      | Crunchbase, PitchBook, Tracxn, SEC filings...     | 90 days      |
+| `techstack_node`  | Tech stack, engineering blog, job postings | StackShare, GitHub, dev.to, BuiltWith...          | 180 days     |
+| `competitor_node` | Competitors, market positioning            | G2, Capterra, Gartner, SimilarWeb...              | 30 days      |
+| `people_node`     | Executives, leadership changes             | LinkedIn, Crunchbase, Forbes, Substack...         | 30 days      |
+| `product_node`    | Reviews, user sentiment, pricing           | Product Hunt, G2, Capterra, Reddit, Trustpilot... | 30 days      |
 
-Each node runs **simultaneously** via LangGraph's parallel fan-out. `load_cache_node` also runs in parallel to fetch any previously cached report. All 7 results feed into `synthesize_node`, which waits for all to complete before running.
+All 6 run at the same time. `load_cache_node` also runs in parallel to grab any previously saved report. `synthesize_node` waits for all 7 before it does anything.
 
 ### Validation
 
-After synthesis, `validation_node` runs three checks:
+After the brief is written, `validation_node` runs three checks:
 
-1. **Source grounding** — each claim in the *Funding & Growth*, *Key People*, and *Recent Signals* sections is checked sentence-by-sentence against the Tavily sources using Groq/Llama-3.3. Short sentences (< 8 words) and transition phrases are skipped.
-2. **Completeness** — verifies all 6 required sections are present in the brief.
-3. **Staleness** — flags any search dimension that returned zero results.
+1. **Source grounding** — takes claims from the *Funding & Growth*, *Key People*, and *Recent Signals* sections and checks each sentence against the actual Tavily sources using Groq. Short sentences and filler phrases get skipped automatically.
+2. **Completeness** — makes sure all 6 required sections made it into the brief.
+3. **Staleness** — flags any dimension where Tavily came back empty.
 
-The overall score is `grounded / checked` (only sentences actually sent to Groq count) minus structural penalties: −0.10 per missing section, −0.05 per empty dimension. Minimum score: 0.0.
+The score is `grounded / checked` minus penalties for missing sections (−0.10 each) and empty dimensions (−0.05 each).
 
-### Change Detection
+### Change detection
 
-On every run, the synthesized brief is cached locally (`cache/<company>.json`). On subsequent runs, `change_detection_node` compares the latest news against the cached version using Groq and surfaces what meaningfully changed — new funding, leadership changes, product launches, etc.
+Every brief gets cached locally as `cache/<company>.json`. Next time you run the same company, `change_detection_node` compares the fresh news against the old report and calls out anything that actually changed — new funding, leadership moves, product announcements, etc.
 
 ---
 
 ## Features
 
-- **Parallel execution** — 7 nodes run simultaneously (6 searches + cache load)
-- **Domain filtering** — each node targets trusted, relevant sources per intelligence type
-- **Per-section confidence scores** — every section scored 1–5 based on data quality
-- **Validation** — grounding check, completeness check, and staleness check with a composite score
-- **Change detection** — diffs new results against cached report and highlights what changed
-- **Source citations** — every result links back to its original source
-- **Export** — download the full brief as a Markdown file
-- **Live pipeline UI** — node status cards update in real-time as each search completes
-- **Structured logging** — all Tavily and LLM calls logged with timing and token counts to `logs/agentcorp.log`
-- **FastAPI backend** — REST API decouples the pipeline from the UI
+- 7 nodes running in parallel (6 searches + cache load)
+- Each node targets specific domains relevant to what it's looking for
+- Per-section confidence scores (1–5) based on source quality
+- Grounding, completeness, and staleness checks with a composite score
+- Diffs new results against the cached report
+- Source links on every result
+- Download the brief as a Markdown file
+- Live status cards in the UI that update as each node finishes
+- Everything logged with timing and token counts to `logs/agentcorp.log`
+- FastAPI backend so the pipeline isn't coupled to the UI
 
 ---
 
-## Tech Stack
+## Tech stack
 
-| Layer               | Technology                                             |
+| Layer               | What                                                   |
 | ------------------- | ------------------------------------------------------ |
 | Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) |
 | Web search          | [Tavily API](https://tavily.com)                       |
-| LLM synthesis       | [Groq](https://groq.com) + Llama-3.3-70b-versatile     |
-| Backend API         | [FastAPI](https://fastapi.tiangolo.com) + Uvicorn       |
+| LLM                 | [Groq](https://groq.com) + Llama-3.3-70b-versatile     |
+| Backend             | [FastAPI](https://fastapi.tiangolo.com) + Uvicorn       |
 | UI                  | [Streamlit](https://streamlit.io)                      |
 | Tracing             | [LangSmith](https://smith.langchain.com) (optional)    |
-| Caching             | Local JSON (`cache/`)                                  |
+| Cache               | Local JSON (`cache/`)                                  |
 
 ---
 
-## Getting Started
+## Getting started
 
-### Prerequisites
+### You'll need
 
 - Python 3.10+
-- [Tavily API key](https://tavily.com) — free tier includes 1,000 searches/month
-- [Groq API key](https://console.groq.com) — free tier, very fast inference
+- [Tavily API key](https://tavily.com) — free tier is 1,000 searches/month
+- [Groq API key](https://console.groq.com) — free, fast
 
-### Installation
+### Setup
 
 ```bash
-# Clone the repo
 git clone https://github.com/your-username/agentcorp.git
 cd agentcorp
 
-# Create and activate virtual environment
 python -m venv venv
 source venv/bin/activate        # Mac/Linux
 venv\Scripts\activate           # Windows
 
-# Install dependencies
 pip install -r requirements.txt
 
-# Set up environment variables
 cp .env.example .env
-# Edit .env and add your API keys
+# add your keys to .env
 ```
 
-### Environment Variables
+### Environment variables
 
 ```env
 TAVILY_API_KEY=tvly-...
 GROQ_API_KEY=gsk_...
 
-# Optional — enables LangSmith tracing
+# optional — enables LangSmith tracing
 LANGCHAIN_API_KEY=ls__...
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_PROJECT=agentcorp
 ```
 
-### Run
+### Running it
 
-**Option 1 — Streamlit + FastAPI (recommended)**
+Start the API server and the UI in two terminals:
 
 ```bash
-# Terminal 1: start the API server
+# terminal 1
 uvicorn api.main:app --reload --port 8000
 
-# Terminal 2: start the Streamlit UI
+# terminal 2
 streamlit run app.py
 ```
 
-UI opens at `http://localhost:8501`. The Streamlit app calls the FastAPI backend at `http://localhost:8000`.
-
-**Option 2 — Streamlit only**
-
-```bash
-streamlit run app.py
-```
-
-The UI will call the API, so make sure the API server is also running.
+UI is at `http://localhost:8501`. It talks to the API at `http://localhost:8000`.
 
 ---
 
-## API Reference
+## API
 
 ### `GET /health`
 
-Returns `{"status": "ok"}`.
+```json
+{ "status": "ok" }
+```
 
 ### `POST /research`
 
-Run the full pipeline for a company.
-
-**Request body:**
 ```json
 { "company_name": "Notion" }
 ```
 
-**Response:**
+Returns:
+
 ```json
 {
   "company_name": "Notion",
@@ -201,11 +189,11 @@ Run the full pipeline for a company.
 
 ### `GET /research/{company_name}`
 
-Retrieve the cached report for a company (returns 404 if not cached).
+Returns the cached report for a company, or 404 if there isn't one.
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 agentcorp/
@@ -214,101 +202,95 @@ agentcorp/
 ├── .env.example
 │
 ├── agent/
-│   ├── graph.py                # LangGraph graph definition (10 nodes)
-│   ├── nodes.py                # All nodes: search, synthesis, validation, change detection
-│   ├── prompts.py              # LLM prompt templates
+│   ├── graph.py                # LangGraph graph (10 nodes)
+│   ├── nodes.py                # all nodes: search, synthesis, validation, change detection
+│   ├── prompts.py              # LLM prompts
 │   └── state.py                # AgentState TypedDict
 │
 ├── api/
-│   ├── config.py               # Pydantic settings (env vars)
-│   ├── main.py                 # FastAPI app + endpoints
-│   └── schemas.py              # Request/response Pydantic models
+│   ├── config.py               # env var settings (Pydantic)
+│   ├── main.py                 # FastAPI endpoints
+│   └── schemas.py              # request/response models
 │
 ├── utils/
-│   ├── cache.py                # Local JSON caching (save/load/exists)
-│   ├── export.py               # Confidence score parser + Markdown export
-│   ├── logger.py               # Centralized logging config (RotatingFileHandler)
-│   ├── tracing.py              # LangSmith tracing helpers
+│   ├── cache.py                # save/load/check local JSON cache
+│   ├── export.py               # confidence score parser + Markdown export
+│   ├── logger.py               # logging setup (RotatingFileHandler)
+│   ├── tracing.py              # LangSmith helpers
 │   ├── validation_result.py    # ValidationResult dataclass
-│   └── validator.py            # Grounding, completeness, and staleness checks
+│   └── validator.py            # grounding, completeness, staleness checks
 │
 ├── tests/
-│   └── test_nodes.py           # pytest integration tests for all 6 search nodes
+│   └── test_nodes.py           # integration tests for all 6 search nodes
 │
-├── cache/                      # Auto-created, gitignored
-│   └── <company>.json
-│
-└── logs/                       # Auto-created, gitignored
-    └── agentcorp.log
+├── cache/                      # auto-created, gitignored
+├── logs/                       # auto-created, gitignored
+└── img/
+    └── LangSmith.png
 ```
 
 ---
 
-## Running Tests
+## Tests
 
-Integration tests make real Tavily API calls against company "Notion". Requires `TAVILY_API_KEY` in `.env`.
+Tests make real Tavily calls using "Notion" as the test company. You need `TAVILY_API_KEY` set in `.env`.
 
 ```bash
 pytest tests/test_nodes.py -v -s
 ```
 
-Each test prints the number of results returned and the first result title.
+Each test prints how many results came back and what the first one was.
 
 ---
 
 ## Observability
 
-When `LANGCHAIN_TRACING_V2=true` is set, every pipeline run is traced in LangSmith — full node-by-node breakdown, token counts, and latency per step.
+Set `LANGCHAIN_TRACING_V2=true` and every run gets traced in LangSmith — you can see exactly what each node did, how long it took, and how many tokens were used.
 
-![LangSmith trace showing the AgentCorp pipeline](img/LangSmith.png)
+![LangSmith trace showing the agent-corp pipeline](img/LangSmith.png)
 
 ---
 
 ## Logging
 
-All activity is logged to `logs/agentcorp.log` (rotating, 5 MB × 3 backups) and to the console.
+Everything goes to `logs/agentcorp.log` (rotating, 5 MB × 3 backups) and the console.
 
-Every Tavily search logs:
-- Query string, target domains, time window
-- Number of hits, new (deduplicated) results, elapsed ms
+Tavily calls log the query, domains, time window, result count, and how long the request took.
 
-Every Groq LLM call logs:
-- Function name, model, prompt tokens, completion tokens, total tokens, elapsed ms
+Groq calls log prompt tokens, completion tokens, and elapsed time.
 
-Validation logs a WARNING if the brief scores below 0.70.
+If a brief scores below 0.70 on validation, it logs at WARNING level.
 
 ---
 
-## Example Output
+## What the brief looks like
 
-The generated brief includes:
+Six sections, each with a confidence score (1–5):
 
-- **Company Snapshot** — industry, business model, size/stage
-- **Recent Signals** — latest news creating urgency
-- **Tech Stack** — current tools, gaps, hiring signals
-- **Funding & Growth** — funding rounds, investors, growth signals
-- **Key People** — executives, leadership changes, LinkedIn signals
-- **Product Sentiment** — reviews, pricing, recurring complaints
-
-Each section ends with a **Confidence score (1–5)** based on source quality and recency.
+- **Company Snapshot** — what they do, how big they are, what stage they're at
+- **Recent Signals** — what's happened lately worth knowing about
+- **Tech Stack** — what they're built on, what they're hiring for
+- **Funding & Growth** — rounds, investors, growth trajectory
+- **Key People** — who's running the place, recent changes
+- **Product Sentiment** — what users actually think, pricing, complaints
 
 ---
 
-## API Costs
+## Costs
 
-A typical run makes ~12 Tavily searches and ~22 Groq calls (1 synthesis + 1 change detection + up to 20 grounding checks).
+A typical run is ~12 Tavily searches and ~22 Groq calls (synthesis + change detection + up to 20 grounding checks).
 
-| Service              | Usage per run                        | Cost                   |
-| -------------------- | ------------------------------------ | ---------------------- |
-| Tavily               | ~12 searches                         | Free tier: 1,000/month |
-| Groq (Llama-3.3-70b) | ~8,000 tokens in / ~5,000 out        | Free tier available    |
+| Service              | Per run                        | Cost                   |
+| -------------------- | ------------------------------ | ---------------------- |
+| Tavily               | ~12 searches                   | free tier: 1,000/month |
+| Groq (Llama-3.3-70b) | ~8k tokens in / ~5k tokens out | free tier available    |
 
 ---
 
-## Limitations
+## Known limitations
 
 - Tavily free tier caps at 1,000 searches/month
-- Domain filtering may reduce results for smaller/less-covered companies
-- Change detection compares news only (not all 6 dimensions)
-- Cache is local — not shared across machines or users
-- No authentication or multi-user support
+- Smaller or less-covered companies will get fewer results
+- Change detection only diffs the news dimension, not all 6
+- Cache is local only — nothing shared across machines
+- No auth, no multi-user support

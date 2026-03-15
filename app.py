@@ -13,7 +13,7 @@ API_BASE = settings.api_base_url
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="B2B Sales Intelligence Agent",
+    page_title="Agent Corp",
     page_icon="🔍",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -151,7 +151,7 @@ def render_result_card(r: dict):
 def build_export_markdown(company: str, brief: str, sources: list[dict]) -> str:
     lines = [
         f"# Sales Intelligence Brief — {company}",
-        f"*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')} by B2B Sales Intelligence Agent*",
+        f"*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')} by Agent Corp*",
         "",
         brief,
         "",
@@ -249,7 +249,7 @@ def run_pipeline(company_name: str) -> dict:
 # ── App Layout ────────────────────────────────────────────────────────────────
 
 # Header
-st.markdown('<p class="hero-title">🔍 B2B Sales Intelligence Agent</p>', unsafe_allow_html=True)
+st.markdown('<p class="hero-title">🔍 Agent Corp</p>', unsafe_allow_html=True)
 st.markdown(
     '<p class="hero-sub">Enter a company name and get a full AI-powered sales brief in seconds — '
     "powered by Tavily, LangGraph & Groq/Llama-3.3</p>",
@@ -521,7 +521,7 @@ else:
             <div style="font-size:4rem;">🔍</div>
             <p style="font-size:1.1rem;margin-top:12px;">
                 Enter a company name above and click <strong>Analyze</strong> to generate<br>
-                a full B2B sales intelligence brief in ~30 seconds.
+                a full debrief in ~30 seconds.
             </p>
             <div style="margin-top:28px;display:flex;justify-content:center;gap:20px;flex-wrap:wrap;">
                 <div style="background:#f3f4f6;border-radius:10px;padding:14px 20px;font-size:0.88rem;">

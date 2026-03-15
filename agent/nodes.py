@@ -11,8 +11,13 @@ def _get_tavily() -> TavilyClient:
     return TavilyClient(api_key=api_key)
 
 
-def _run_searches(client: TavilyClient, queries: list[str], max_results: int = 5) -> list[dict]:
-    """Run multiple Tavily queries and return deduplicated results."""
+def _run_searches(
+    client: TavilyClient,
+    queries: list[str],
+    include_domains: list[str],
+    max_results: int = 5,
+) -> list[dict]:
+    """Run multiple Tavily queries with domain filtering and return deduplicated results."""
     seen_urls: set[str] = set()
     results: list[dict] = []
 
@@ -23,6 +28,7 @@ def _run_searches(client: TavilyClient, queries: list[str], max_results: int = 5
                 max_results=max_results,
                 search_depth="advanced",
                 include_raw_content=False,
+                include_domains=include_domains,
             )
             for r in response.get("results", []):
                 url = r.get("url", "")
@@ -39,7 +45,6 @@ def _run_searches(client: TavilyClient, queries: list[str], max_results: int = 5
         except Exception as e:
             print(f"[Tavily] Error on query '{query}': {e}")
 
-    # Sort by relevance score descending
     results.sort(key=lambda x: x["score"], reverse=True)
     return results
 
@@ -53,7 +58,12 @@ def news_node(state: AgentState) -> dict:
         f'"{company}" latest news announcement 2024 2025',
         f'"{company}" press release product launch partnership expansion',
     ]
-    return {"news_results": _run_searches(client, queries)}
+    domains = [
+        "techcrunch.com", "reuters.com", "bloomberg.com", "forbes.com",
+        "businessinsider.com", "theverge.com", "wired.com",
+        "venturebeat.com", "inc.com", "fastcompany.com",
+    ]
+    return {"news_results": _run_searches(client, queries, domains)}
 
 
 def funding_node(state: AgentState) -> dict:
@@ -63,7 +73,11 @@ def funding_node(state: AgentState) -> dict:
         f'"{company}" funding round Series investment valuation',
         f'"{company}" revenue growth investors financial health IPO acquisition',
     ]
-    return {"funding_results": _run_searches(client, queries)}
+    domains = [
+        "crunchbase.com", "pitchbook.com", "tracxn.com", "dealroom.co",
+        "techcrunch.com", "bloomberg.com", "sec.gov", "axios.com",
+    ]
+    return {"funding_results": _run_searches(client, queries, domains)}
 
 
 def techstack_node(state: AgentState) -> dict:
@@ -73,7 +87,11 @@ def techstack_node(state: AgentState) -> dict:
         f'"{company}" tech stack technology tools infrastructure cloud',
         f'"{company}" engineering blog job posting software developer hiring',
     ]
-    return {"techstack_results": _run_searches(client, queries)}
+    domains = [
+        "stackshare.io", "github.com", "dev.to", "medium.com",
+        "builtwith.com", "npmjs.com", "pypi.org",
+    ]
+    return {"techstack_results": _run_searches(client, queries, domains)}
 
 
 def competitor_node(state: AgentState) -> dict:
@@ -83,7 +101,12 @@ def competitor_node(state: AgentState) -> dict:
         f'"{company}" competitors alternatives market landscape comparison',
         f'"{company}" vs competitor differentiation market share positioning',
     ]
-    return {"competitor_results": _run_searches(client, queries)}
+    domains = [
+        "g2.com", "capterra.com", "getapp.com", "trustradius.com",
+        "similarweb.com", "producthunt.com", "alternativeto.net",
+        "gartner.com", "forrester.com",
+    ]
+    return {"competitor_results": _run_searches(client, queries, domains)}
 
 
 def people_node(state: AgentState) -> dict:
@@ -93,7 +116,25 @@ def people_node(state: AgentState) -> dict:
         f'"{company}" CEO founder CTO executive leadership team',
         f'"{company}" VP director hire executive LinkedIn profile',
     ]
-    return {"people_results": _run_searches(client, queries)}
+    domains = [
+        "linkedin.com", "twitter.com", "x.com", "crunchbase.com",
+        "bloomberg.com", "forbes.com", "medium.com", "substack.com",
+    ]
+    return {"people_results": _run_searches(client, queries, domains)}
+
+
+def product_node(state: AgentState) -> dict:
+    company = state["company_name"]
+    client = _get_tavily()
+    queries = [
+        f'"{company}" product review user sentiment rating experience',
+        f'"{company}" product listing features pricing plans',
+    ]
+    domains = [
+        "producthunt.com", "g2.com", "capterra.com", "getapp.com",
+        "trustradius.com", "trustpilot.com", "reddit.com", "appsumo.com",
+    ]
+    return {"product_results": _run_searches(client, queries, domains)}
 
 
 # ── Synthesis Node ────────────────────────────────────────────────────────────
@@ -120,11 +161,12 @@ def synthesize_node(state: AgentState) -> dict:
     all_sources: list[dict] = []
     seen_source_urls: set[str] = set()
     dimension_map = {
-        "news": state.get("news_results", []),
-        "funding": state.get("funding_results", []),
-        "techstack": state.get("techstack_results", []),
+        "news":        state.get("news_results", []),
+        "funding":     state.get("funding_results", []),
+        "techstack":   state.get("techstack_results", []),
         "competitors": state.get("competitor_results", []),
-        "people": state.get("people_results", []),
+        "people":      state.get("people_results", []),
+        "product":     state.get("product_results", []),
     }
     for dimension, results in dimension_map.items():
         for r in results:
@@ -141,6 +183,7 @@ def synthesize_node(state: AgentState) -> dict:
         techstack_section=_format_section(state.get("techstack_results", [])),
         competitor_section=_format_section(state.get("competitor_results", [])),
         people_section=_format_section(state.get("people_results", [])),
+        product_section=_format_section(state.get("product_results", [])),
     )
 
     client = Groq(api_key=api_key)

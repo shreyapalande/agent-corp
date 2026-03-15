@@ -93,6 +93,7 @@ NODE_META = {
     "techstack_node":  {"label": "Tech Stack",             "icon": "🛠️"},
     "competitor_node": {"label": "Competitive Landscape",  "icon": "⚔️"},
     "people_node":     {"label": "Key People",             "icon": "👥"},
+    "product_node":    {"label": "Product & Sentiment",    "icon": "📦"},
     "synthesize_node": {"label": "Synthesizing Brief",     "icon": "🧠"},
 }
 
@@ -102,24 +103,40 @@ DIMENSION_LABELS = {
     "techstack":   ("🛠️ Tech Stack",            "techstack_results"),
     "competitors": ("⚔️ Competitors",           "competitor_results"),
     "people":      ("👥 Key People",            "people_results"),
+    "product":     ("📦 Product & Sentiment",   "product_results"),
 }
 
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
 def render_result_card(r: dict):
+    st.write(f"[{r['title']}]({r['url']})")
+    st.caption(r["url"])
+
+    content = r["content"]
+    limit = 400
+
+    if len(content) > limit:
+        # Trim to last complete sentence within limit
+        trimmed = content[:limit]
+        last_period = max(trimmed.rfind(". "), trimmed.rfind("! "), trimmed.rfind("? "))
+        if last_period > 200:
+            trimmed = trimmed[: last_period + 1]
+        snippet = trimmed + " ..."
+    else:
+        snippet = content
+
+    # Strip markdown image syntax and HTML img tags before displaying
+    import re
+    snippet = re.sub(r"!\[.*?\]\(.*?\)", "", snippet)
+    snippet = re.sub(r"<img[^>]*>", "", snippet, flags=re.IGNORECASE)
+    snippet = snippet.strip()
+
     st.markdown(
-        f"""
-        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;
-                    padding:14px 18px;margin:8px 0;">
-            <a href="{r['url']}" target="_blank" style="font-weight:600;color:#4f46e5;
-               text-decoration:none;">{r['title']}</a>
-            <p style="color:#374151;font-size:0.87rem;margin:6px 0 4px;">{r['content'][:350]}…</p>
-            <span style="font-size:0.75rem;color:#9ca3af;">{r['url']}</span>
-        </div>
-        """,
+        f'<p style="font-size:0.95rem;line-height:1.6;color:#374151;margin:6px 0 12px;">{snippet}</p>',
         unsafe_allow_html=True,
     )
+    st.divider()
 
 
 def build_export_markdown(company: str, brief: str, sources: list[dict]) -> str:
@@ -151,6 +168,7 @@ def run_pipeline(company_name: str):
         "techstack_results": [],
         "competitor_results": [],
         "people_results": [],
+        "product_results": [],
         "brief": "",
         "all_sources": [],
     }
@@ -163,7 +181,7 @@ def run_pipeline(company_name: str):
     col_map = {
         "news_node": 0, "funding_node": 0,
         "techstack_node": 1, "competitor_node": 1,
-        "people_node": 2, "synthesize_node": 2,
+        "people_node": 2, "product_node": 2, "synthesize_node": 2,
     }
     for node_id, meta in NODE_META.items():
         col = progress_cols[col_map[node_id]]
@@ -277,6 +295,7 @@ if analyze_clicked:
                 "🛠️ Tech Stack":  len(final_state.get("techstack_results", [])),
                 "⚔️ Competitors": len(final_state.get("competitor_results", [])),
                 "👥 People":      len(final_state.get("people_results", [])),
+                "📦 Product":     len(final_state.get("product_results", [])),
             }
             for label, count in result_counts.items():
                 st.metric(label, f"{count} results")
@@ -316,6 +335,7 @@ if analyze_clicked:
                 "techstack": "#fef3c7",
                 "competitors": "#fce7f3",
                 "people": "#f3e8ff",
+                "product": "#ffedd5",
             }
             for s in all_sources:
                 color = dim_colors.get(s["dimension"], "#f3f4f6")

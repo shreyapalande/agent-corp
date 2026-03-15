@@ -17,6 +17,9 @@ SYNTHESIS_PROMPT = """You are an expert B2B sales intelligence analyst. A sales 
 ### 👥 Key People & Leadership
 {people_section}
 
+### 📦 Product & User Sentiment
+{product_section}
+
 ---
 
 Now generate a structured sales brief. Be specific, cite concrete facts from the research, and focus on what creates sales opportunity. If data is unavailable for a section, note it briefly and move on.
@@ -37,6 +40,9 @@ Now generate a structured sales brief. Be specific, cite concrete facts from the
 
 ## Tech Stack & Infrastructure Insights
 [Current tools and platforms, identified gaps, open-source signals, job posting signals]
+
+## Product & User Sentiment
+[Key features, pricing tiers, user reviews, recurring complaints, satisfaction signals]
 
 ## Competitive Position
 [Key competitors, how they differentiate, market share signals, weaknesses to exploit]

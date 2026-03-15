@@ -15,5 +15,6 @@ class AgentState(TypedDict):
     techstack_results: list[SearchResult]
     competitor_results: list[SearchResult]
     people_results: list[SearchResult]
+    product_results: list[SearchResult]
     brief: str
     all_sources: list[dict]

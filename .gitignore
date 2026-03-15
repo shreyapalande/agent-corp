@@ -40,3 +40,4 @@ logs/
 
 # Memory (local only)
 memory/
+.claude/

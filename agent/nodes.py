@@ -15,6 +15,7 @@ def _run_searches(
     client: TavilyClient,
     queries: list[str],
     include_domains: list[str],
+    days: int = 30,
     max_results: int = 5,
 ) -> list[dict]:
     """Run multiple Tavily queries with domain filtering and return deduplicated results."""
@@ -29,6 +30,7 @@ def _run_searches(
                 search_depth="advanced",
                 include_raw_content=False,
                 include_domains=include_domains,
+                days=days,
             )
             for r in response.get("results", []):
                 url = r.get("url", "")
@@ -63,7 +65,7 @@ def news_node(state: AgentState) -> dict:
         "businessinsider.com", "theverge.com", "wired.com",
         "venturebeat.com", "inc.com", "fastcompany.com",
     ]
-    return {"news_results": _run_searches(client, queries, domains)}
+    return {"news_results": _run_searches(client, queries, domains, days=7)}
 
 
 def funding_node(state: AgentState) -> dict:
@@ -77,7 +79,7 @@ def funding_node(state: AgentState) -> dict:
         "crunchbase.com", "pitchbook.com", "tracxn.com", "dealroom.co",
         "techcrunch.com", "bloomberg.com", "sec.gov", "axios.com",
     ]
-    return {"funding_results": _run_searches(client, queries, domains)}
+    return {"funding_results": _run_searches(client, queries, domains, days=90)}
 
 
 def techstack_node(state: AgentState) -> dict:
@@ -91,7 +93,7 @@ def techstack_node(state: AgentState) -> dict:
         "stackshare.io", "github.com", "dev.to", "medium.com",
         "builtwith.com", "npmjs.com", "pypi.org",
     ]
-    return {"techstack_results": _run_searches(client, queries, domains)}
+    return {"techstack_results": _run_searches(client, queries, domains, days=180)}
 
 
 def competitor_node(state: AgentState) -> dict:
@@ -106,7 +108,7 @@ def competitor_node(state: AgentState) -> dict:
         "similarweb.com", "producthunt.com", "alternativeto.net",
         "gartner.com", "forrester.com",
     ]
-    return {"competitor_results": _run_searches(client, queries, domains)}
+    return {"competitor_results": _run_searches(client, queries, domains, days=30)}
 
 
 def people_node(state: AgentState) -> dict:
@@ -120,7 +122,7 @@ def people_node(state: AgentState) -> dict:
         "linkedin.com", "twitter.com", "x.com", "crunchbase.com",
         "bloomberg.com", "forbes.com", "medium.com", "substack.com",
     ]
-    return {"people_results": _run_searches(client, queries, domains)}
+    return {"people_results": _run_searches(client, queries, domains, days=30)}
 
 
 def product_node(state: AgentState) -> dict:
@@ -134,7 +136,7 @@ def product_node(state: AgentState) -> dict:
         "producthunt.com", "g2.com", "capterra.com", "getapp.com",
         "trustradius.com", "trustpilot.com", "reddit.com", "appsumo.com",
     ]
-    return {"product_results": _run_searches(client, queries, domains)}
+    return {"product_results": _run_searches(client, queries, domains, days=30)}
 
 
 # ── Synthesis Node ────────────────────────────────────────────────────────────

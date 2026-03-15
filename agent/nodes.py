@@ -197,4 +197,98 @@ def synthesize_node(state: AgentState) -> dict:
     )
 
     brief = response.choices[0].message.content
+
+    # Persist to cache
+    from utils.export import parse_confidence_scores
+    from utils.cache import save_report
+    sections = parse_confidence_scores(brief)
+    save_report(company, brief, {k: v["content"] for k, v in sections.items()})
+
     return {"brief": brief, "all_sources": all_sources}
+
+
+# ── Change Detection Node ─────────────────────────────────────────────────────
+
+def change_detection_node(state: AgentState) -> dict:
+    from groq import Groq
+    from utils.cache import load_report, report_exists
+    from datetime import datetime, timezone
+
+    company = state["company_name"]
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    # Load the *previous* cache (saved before this run's synthesize_node overwrote it)
+    # synthesize_node already saved the new report, so we compare new news vs cached news section
+    cached = load_report(company)
+
+    # On first run there is no prior cache to compare against
+    if not cached or not cached.get("sections"):
+        return {
+            "is_first_run": True,
+            "cached_report": "",
+            "changes_detected": [],
+            "last_searched": timestamp,
+        }
+
+    old_news = cached["sections"].get("Recent Activity & Sales Triggers", "")
+    if not old_news:
+        # Try alternate heading names the LLM may have used
+        for key in cached["sections"]:
+            if "news" in key.lower() or "activity" in key.lower() or "trigger" in key.lower():
+                old_news = cached["sections"][key]
+                break
+
+    new_news_results = state.get("news_results", [])
+    new_news = "\n\n".join(
+        f"{r['title']}: {r['content'][:300]}" for r in new_news_results[:5]
+    )
+
+    if not old_news or not new_news:
+        return {
+            "is_first_run": False,
+            "cached_report": cached.get("brief", ""),
+            "changes_detected": [],
+            "last_searched": cached.get("timestamp", "unknown"),
+        }
+
+    change_prompt = (
+        "You are comparing two versions of a company intelligence report.\n\n"
+        f"OLD REPORT (cached):\n{old_news}\n\n"
+        f"NEW REPORT (fresh):\n{new_news}\n\n"
+        "Identify what has meaningfully changed. Focus on:\n"
+        "- New funding, acquisitions, or partnerships\n"
+        "- Leadership changes\n"
+        "- New product launches or shutdowns\n"
+        "- Significant press coverage that wasn't there before\n\n"
+        "Return a bullet list of changes. "
+        "If nothing meaningful changed, say exactly: No significant changes detected."
+    )
+
+    api_key = os.getenv("GROQ_API_KEY")
+    client = Groq(api_key=api_key)
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": change_prompt}],
+        temperature=0.2,
+        max_tokens=800,
+    )
+
+    raw = response.choices[0].message.content.strip()
+
+    if "no significant changes detected" in raw.lower():
+        changes: list[str] = []
+    else:
+        # Parse bullet lines into a clean list
+        changes = [
+            line.lstrip("-•* ").strip()
+            for line in raw.splitlines()
+            if line.strip().startswith(("-", "•", "*")) or line.strip()
+        ]
+        changes = [c for c in changes if c]
+
+    return {
+        "is_first_run": False,
+        "cached_report": cached.get("brief", ""),
+        "changes_detected": changes,
+        "last_searched": cached.get("timestamp", "unknown"),
+    }

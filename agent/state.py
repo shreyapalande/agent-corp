@@ -18,3 +18,7 @@ class AgentState(TypedDict):
     product_results: list[SearchResult]
     brief: str
     all_sources: list[dict]
+    is_first_run: bool
+    cached_report: str
+    changes_detected: list[str]
+    last_searched: str

@@ -89,13 +89,14 @@ st.markdown(
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 NODE_META = {
-    "news_node":       {"label": "News & Announcements",   "icon": "📰"},
-    "funding_node":    {"label": "Funding & Financials",   "icon": "💰"},
-    "techstack_node":  {"label": "Tech Stack",             "icon": "🛠️"},
-    "competitor_node": {"label": "Competitive Landscape",  "icon": "⚔️"},
-    "people_node":     {"label": "Key People",             "icon": "👥"},
-    "product_node":    {"label": "Product & Sentiment",    "icon": "📦"},
-    "synthesize_node": {"label": "Synthesizing Brief",     "icon": "🧠"},
+    "news_node":             {"label": "News & Announcements",   "icon": "📰"},
+    "funding_node":          {"label": "Funding & Financials",   "icon": "💰"},
+    "techstack_node":        {"label": "Tech Stack",             "icon": "🛠️"},
+    "competitor_node":       {"label": "Competitive Landscape",  "icon": "⚔️"},
+    "people_node":           {"label": "Key People",             "icon": "👥"},
+    "product_node":          {"label": "Product & Sentiment",    "icon": "📦"},
+    "synthesize_node":       {"label": "Synthesizing Brief",     "icon": "🧠"},
+    "change_detection_node": {"label": "Detecting Changes",      "icon": "🔄"},
 }
 
 DIMENSION_LABELS = {
@@ -172,6 +173,10 @@ def run_pipeline(company_name: str):
         "product_results": [],
         "brief": "",
         "all_sources": [],
+        "is_first_run": False,
+        "cached_report": "",
+        "changes_detected": [],
+        "last_searched": "",
     }
 
     # ── Pipeline progress UI ─────────────────────────────────────────────────
@@ -180,9 +185,9 @@ def run_pipeline(company_name: str):
 
     node_placeholders: dict = {}
     col_map = {
-        "news_node": 0, "funding_node": 0,
-        "techstack_node": 1, "competitor_node": 1,
-        "people_node": 2, "product_node": 2, "synthesize_node": 2,
+        "news_node": 0, "funding_node": 0, "techstack_node": 0,
+        "competitor_node": 1, "people_node": 1, "product_node": 1,
+        "synthesize_node": 2, "change_detection_node": 2,
     }
     for node_id, meta in NODE_META.items():
         col = progress_cols[col_map[node_id]]
@@ -272,6 +277,40 @@ if analyze_clicked:
             final_state = run_pipeline(company_name)
 
         st.success(f"✅ Intelligence brief for **{company_name}** is ready!")
+
+        # ── Change detection banner ────────────────────────────────────────────
+        is_first_run = final_state.get("is_first_run", False)
+        changes = final_state.get("changes_detected", [])
+        last_searched = final_state.get("last_searched", "")
+
+        if is_first_run:
+            st.markdown(
+                '<div style="background:#f3f4f6;border:1px solid #d1d5db;border-radius:8px;'
+                'padding:10px 16px;font-size:0.88rem;color:#6b7280;margin:8px 0;">'
+                "🆕 First report generated — no previous data to compare"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        elif changes:
+            change_bullets = "".join(f"<li>{c}</li>" for c in changes)
+            st.markdown(
+                '<div style="background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;'
+                'padding:12px 18px;margin:8px 0;">'
+                '<p style="font-weight:700;color:#b45309;margin:0 0 8px;">🔄 What changed since last search:</p>'
+                f"<ul style='margin:0;padding-left:20px;color:#374151;font-size:0.9rem;'>{change_bullets}</ul>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            formatted_ts = last_searched.replace("T", " ").split(".")[0] if "T" in last_searched else last_searched
+            st.markdown(
+                '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;'
+                f'padding:10px 16px;font-size:0.88rem;color:#15803d;margin:8px 0;">'
+                f"✅ No significant changes since last searched on {formatted_ts}"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
         st.markdown("---")
 
         # ── Brief display ─────────────────────────────────────────────────────

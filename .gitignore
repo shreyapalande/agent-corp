@@ -31,3 +31,6 @@ Thumbs.db
 
 # Memory (local only)
 memory/
+
+# Logs
+logs/

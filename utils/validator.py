@@ -9,7 +9,12 @@ Three checks:
 
 from __future__ import annotations
 
+import time
+
+from utils.logger import get_logger
 from utils.validation_result import ValidationResult
+
+logger = get_logger(__name__)
 
 REQUIRED_SECTIONS = [
     "Company Snapshot",
@@ -57,6 +62,7 @@ def check_source_grounding(
     Returns a list of ungrounded claim strings.
     """
     if not groq_api_key or not brief or not all_sources:
+        logger.debug("check_source_grounding | skipped (missing api_key, brief, or sources)")
         return []
 
     source_text = "\n\n".join(
@@ -65,30 +71,52 @@ def check_source_grounding(
     )
 
     prompt = _GROUNDING_PROMPT.format(brief=brief[:6000], sources=source_text)
+    logger.debug(
+        "check_source_grounding | sources_sent=%d | brief_chars=%d",
+        min(len(all_sources), max_sources),
+        len(brief[:6000]),
+    )
 
     try:
         from groq import Groq
         import json
 
         client = Groq(api_key=groq_api_key)
+        t0 = time.perf_counter()
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=600,
         )
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        usage = response.usage
+        logger.info(
+            "LLM call | fn=groq_grounding_check | model=llama-3.3-70b-versatile"
+            " | prompt_tokens=%d | completion_tokens=%d | total_tokens=%d | elapsed_ms=%.0f",
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            usage.total_tokens,
+            elapsed_ms,
+        )
+
         raw = response.choices[0].message.content.strip()
 
         # Extract the JSON array even if there's surrounding text
         start = raw.find("[")
         end = raw.rfind("]") + 1
         if start == -1 or end == 0:
+            logger.debug("check_source_grounding | no JSON array in response")
             return []
 
         claims = json.loads(raw[start:end])
-        return [c for c in claims if isinstance(c, str) and c.strip()]
+        ungrounded = [c for c in claims if isinstance(c, str) and c.strip()]
+        logger.debug(
+            "check_source_grounding | ungrounded_claims=%d", len(ungrounded)
+        )
+        return ungrounded
     except Exception as e:
-        print(f"[Validator] Grounding check failed: {e}")
+        logger.error("check_source_grounding | failed | error=%s", e)
         return []
 
 
@@ -100,10 +128,11 @@ def check_completeness(brief: str) -> list[str]:
     Returns a list of missing section names.
     """
     brief_lower = brief.lower()
-    missing = []
-    for section in REQUIRED_SECTIONS:
-        if section.lower() not in brief_lower:
-            missing.append(section)
+    missing = [s for s in REQUIRED_SECTIONS if s.lower() not in brief_lower]
+    if missing:
+        logger.debug("check_completeness | missing_sections=%s", missing)
+    else:
+        logger.debug("check_completeness | all sections present")
     return missing
 
 
@@ -129,7 +158,12 @@ def check_staleness(
         "People": people_results,
         "Product": product_results,
     }
-    return [name for name, results in dimension_map.items() if not results]
+    empty = [name for name, results in dimension_map.items() if not results]
+    if empty:
+        logger.debug("check_staleness | empty_dimensions=%s", empty)
+    else:
+        logger.debug("check_staleness | all dimensions have data")
+    return empty
 
 
 # ── Composite Validator ───────────────────────────────────────────────────────
@@ -154,6 +188,8 @@ def validate_report(
     - Each missing section   → -0.10
     - Each no-data dimension → -0.05
     """
+    logger.debug("validate_report | starting all checks")
+
     ungrounded = check_source_grounding(brief, all_sources, groq_api_key)
     incomplete = check_completeness(brief)
     no_data = check_staleness(
@@ -169,6 +205,12 @@ def validate_report(
     score = max(0.0, round(1.0 - penalty, 2))
     is_valid = score >= 0.6 and not incomplete
 
+    logger.debug(
+        "validate_report | score=%.2f | penalty=%.2f | is_valid=%s",
+        score,
+        penalty,
+        is_valid,
+    )
     return ValidationResult(
         is_valid=is_valid,
         ungrounded_claims=ungrounded,

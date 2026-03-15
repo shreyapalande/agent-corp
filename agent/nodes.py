@@ -1,9 +1,12 @@
-import os
+import time
 from tavily import TavilyClient
 from langsmith import traceable
 from api.config import settings
 from .state import AgentState
 from .prompts import SYNTHESIS_PROMPT
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def _get_tavily() -> TavilyClient:
@@ -25,6 +28,7 @@ def _run_searches(
     results: list[dict] = []
 
     for query in queries:
+        t0 = time.perf_counter()
         try:
             response = client.search(
                 query,
@@ -34,10 +38,15 @@ def _run_searches(
                 include_domains=include_domains,
                 days=days,
             )
-            for r in response.get("results", []):
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            raw_hits = response.get("results", [])
+            new_count = 0
+
+            for r in raw_hits:
                 url = r.get("url", "")
                 if url and url not in seen_urls:
                     seen_urls.add(url)
+                    new_count += 1
                     results.append(
                         {
                             "title": r.get("title", "Untitled"),
@@ -46,10 +55,28 @@ def _run_searches(
                             "score": r.get("score", 0.0),
                         }
                     )
+
+            logger.info(
+                "Tavily query completed | query=%r | domains=%s | days=%d "
+                "| hits=%d | new=%d | elapsed_ms=%.0f",
+                query,
+                ",".join(include_domains[:3]) + ("…" if len(include_domains) > 3 else ""),
+                days,
+                len(raw_hits),
+                new_count,
+                elapsed_ms,
+            )
         except Exception as e:
-            print(f"[Tavily] Error on query '{query}': {e}")
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            logger.error(
+                "Tavily query failed | query=%r | elapsed_ms=%.0f | error=%s",
+                query,
+                elapsed_ms,
+                e,
+            )
 
     results.sort(key=lambda x: x["score"], reverse=True)
+    logger.debug("Tavily batch done | total_unique_results=%d", len(results))
     return results
 
 
@@ -61,12 +88,19 @@ def load_cache_node(state: AgentState) -> dict:
     from utils.cache import load_report
     from datetime import datetime, timezone
 
-    cached = load_report(state["company_name"])
+    company = state["company_name"]
+    cached = load_report(company)
     if not cached:
+        logger.debug("load_cache_node | company=%r | no existing cache", company)
         return {
             "cached_report": "",
             "last_searched": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         }
+    logger.debug(
+        "load_cache_node | company=%r | found cache from %s",
+        company,
+        cached.get("timestamp", "unknown"),
+    )
     return {
         "cached_report": cached.get("brief", ""),
         "last_searched": cached.get("timestamp", ""),
@@ -77,6 +111,7 @@ def load_cache_node(state: AgentState) -> dict:
 
 def news_node(state: AgentState) -> dict:
     company = state["company_name"]
+    logger.info("news_node started | company=%r", company)
     client = _get_tavily()
     queries = [
         f'"{company}" latest news announcement 2024 2025',
@@ -87,11 +122,14 @@ def news_node(state: AgentState) -> dict:
         "businessinsider.com", "theverge.com", "wired.com",
         "venturebeat.com", "inc.com", "fastcompany.com",
     ]
-    return {"news_results": _run_searches(client, queries, domains, days=7)}
+    results = _run_searches(client, queries, domains, days=7)
+    logger.info("news_node done | company=%r | results=%d", company, len(results))
+    return {"news_results": results}
 
 
 def funding_node(state: AgentState) -> dict:
     company = state["company_name"]
+    logger.info("funding_node started | company=%r", company)
     client = _get_tavily()
     queries = [
         f'"{company}" funding round Series investment valuation',
@@ -101,11 +139,14 @@ def funding_node(state: AgentState) -> dict:
         "crunchbase.com", "pitchbook.com", "tracxn.com", "dealroom.co",
         "techcrunch.com", "bloomberg.com", "sec.gov", "axios.com",
     ]
-    return {"funding_results": _run_searches(client, queries, domains, days=90)}
+    results = _run_searches(client, queries, domains, days=90)
+    logger.info("funding_node done | company=%r | results=%d", company, len(results))
+    return {"funding_results": results}
 
 
 def techstack_node(state: AgentState) -> dict:
     company = state["company_name"]
+    logger.info("techstack_node started | company=%r", company)
     client = _get_tavily()
     queries = [
         f'"{company}" tech stack technology tools infrastructure cloud',
@@ -115,11 +156,14 @@ def techstack_node(state: AgentState) -> dict:
         "stackshare.io", "github.com", "dev.to", "medium.com",
         "builtwith.com", "npmjs.com", "pypi.org",
     ]
-    return {"techstack_results": _run_searches(client, queries, domains, days=180)}
+    results = _run_searches(client, queries, domains, days=180)
+    logger.info("techstack_node done | company=%r | results=%d", company, len(results))
+    return {"techstack_results": results}
 
 
 def competitor_node(state: AgentState) -> dict:
     company = state["company_name"]
+    logger.info("competitor_node started | company=%r", company)
     client = _get_tavily()
     queries = [
         f'"{company}" competitors alternatives market landscape comparison',
@@ -130,11 +174,14 @@ def competitor_node(state: AgentState) -> dict:
         "similarweb.com", "producthunt.com", "alternativeto.net",
         "gartner.com", "forrester.com",
     ]
-    return {"competitor_results": _run_searches(client, queries, domains, days=30)}
+    results = _run_searches(client, queries, domains, days=30)
+    logger.info("competitor_node done | company=%r | results=%d", company, len(results))
+    return {"competitor_results": results}
 
 
 def people_node(state: AgentState) -> dict:
     company = state["company_name"]
+    logger.info("people_node started | company=%r", company)
     client = _get_tavily()
     queries = [
         f'"{company}" CEO founder CTO executive leadership team',
@@ -144,11 +191,14 @@ def people_node(state: AgentState) -> dict:
         "linkedin.com", "twitter.com", "x.com", "crunchbase.com",
         "bloomberg.com", "forbes.com", "medium.com", "substack.com",
     ]
-    return {"people_results": _run_searches(client, queries, domains, days=30)}
+    results = _run_searches(client, queries, domains, days=30)
+    logger.info("people_node done | company=%r | results=%d", company, len(results))
+    return {"people_results": results}
 
 
 def product_node(state: AgentState) -> dict:
     company = state["company_name"]
+    logger.info("product_node started | company=%r", company)
     client = _get_tavily()
     queries = [
         f'"{company}" product review user sentiment rating experience',
@@ -158,7 +208,9 @@ def product_node(state: AgentState) -> dict:
         "producthunt.com", "g2.com", "capterra.com", "getapp.com",
         "trustradius.com", "trustpilot.com", "reddit.com", "appsumo.com",
     ]
-    return {"product_results": _run_searches(client, queries, domains, days=30)}
+    results = _run_searches(client, queries, domains, days=30)
+    logger.info("product_node done | company=%r | results=%d", company, len(results))
+    return {"product_results": results}
 
 
 # ── LLM Helpers (traceable) ───────────────────────────────────────────────────
@@ -168,11 +220,22 @@ def _call_groq_synthesis(prompt: str, api_key: str) -> str:
     """Calls Groq/Llama to synthesize the full sales brief. Traced as an LLM span."""
     from groq import Groq
     client = Groq(api_key=api_key)
+    t0 = time.perf_counter()
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
         max_tokens=4000,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    usage = response.usage
+    logger.info(
+        "LLM call | fn=groq_synthesis | model=llama-3.3-70b-versatile"
+        " | prompt_tokens=%d | completion_tokens=%d | total_tokens=%d | elapsed_ms=%.0f",
+        usage.prompt_tokens,
+        usage.completion_tokens,
+        usage.total_tokens,
+        elapsed_ms,
     )
     return response.choices[0].message.content
 
@@ -182,11 +245,22 @@ def _call_groq_change_detection(prompt: str, api_key: str) -> str:
     """Calls Groq/Llama to diff old vs new news. Traced as an LLM span."""
     from groq import Groq
     client = Groq(api_key=api_key)
+    t0 = time.perf_counter()
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
         max_tokens=800,
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    usage = response.usage
+    logger.info(
+        "LLM call | fn=groq_change_detection | model=llama-3.3-70b-versatile"
+        " | prompt_tokens=%d | completion_tokens=%d | total_tokens=%d | elapsed_ms=%.0f",
+        usage.prompt_tokens,
+        usage.completion_tokens,
+        usage.total_tokens,
+        elapsed_ms,
     )
     return response.choices[0].message.content
 
@@ -198,6 +272,9 @@ def synthesize_node(state: AgentState) -> dict:
     if not api_key:
         raise ValueError("GROQ_API_KEY not set in environment")
 
+    company = state["company_name"]
+    logger.info("synthesize_node started | company=%r", company)
+
     def _format_section(results: list[dict], max_items: int = 5) -> str:
         if not results:
             return "No data retrieved for this dimension."
@@ -206,8 +283,6 @@ def synthesize_node(state: AgentState) -> dict:
             snippet = r["content"][:500].strip()
             parts.append(f"**{r['title']}**\n{snippet}\nSource: {r['url']}")
         return "\n\n".join(parts)
-
-    company = state["company_name"]
 
     # Collect all unique sources across every dimension
     all_sources: list[dict] = []
@@ -228,6 +303,12 @@ def synthesize_node(state: AgentState) -> dict:
                     {"title": r["title"], "url": r["url"], "dimension": dimension}
                 )
 
+    logger.debug(
+        "synthesize_node | company=%r | total_unique_sources=%d",
+        company,
+        len(all_sources),
+    )
+
     prompt = SYNTHESIS_PROMPT.format(
         company_name=company,
         news_section=_format_section(state.get("news_results", [])),
@@ -246,6 +327,12 @@ def synthesize_node(state: AgentState) -> dict:
     sections = parse_confidence_scores(brief)
     save_report(company, brief, {k: v["content"] for k, v in sections.items()})
 
+    logger.info(
+        "synthesize_node done | company=%r | brief_chars=%d | sources=%d",
+        company,
+        len(brief),
+        len(all_sources),
+    )
     return {"brief": brief, "all_sources": all_sources}
 
 
@@ -254,9 +341,11 @@ def synthesize_node(state: AgentState) -> dict:
 def validation_node(state: AgentState) -> dict:
     """
     Runs after synthesize_node. Checks source grounding, completeness, and staleness.
-    Logs a warning if overall_score < 0.7.
     """
     from utils.validator import validate_report
+
+    company = state["company_name"]
+    logger.info("validation_node started | company=%r", company)
 
     result = validate_report(
         brief=state.get("brief", ""),
@@ -270,14 +359,23 @@ def validation_node(state: AgentState) -> dict:
         groq_api_key=settings.groq_api_key,
     )
 
+    log_msg = (
+        "validation_node done | company=%r | score=%.2f | is_valid=%s"
+        " | ungrounded=%d | incomplete=%s | no_data=%s"
+    )
+    log_args = (
+        company,
+        result.overall_score,
+        result.is_valid,
+        len(result.ungrounded_claims),
+        result.incomplete_sections,
+        result.no_data_sections,
+    )
+
     if result.overall_score < 0.7:
-        print(
-            f"[Validator] ⚠️  Low confidence score {result.overall_score:.2f} for "
-            f"'{state['company_name']}'. "
-            f"Ungrounded: {len(result.ungrounded_claims)}, "
-            f"Incomplete: {result.incomplete_sections}, "
-            f"No-data: {result.no_data_sections}"
-        )
+        logger.warning(log_msg, *log_args)
+    else:
+        logger.info(log_msg, *log_args)
 
     return {"validation_result": result.to_dict()}
 
@@ -288,10 +386,11 @@ def change_detection_node(state: AgentState) -> dict:
     # Use the old brief that load_cache_node stashed in state BEFORE
     # synthesize_node overwrote the cache file — this is the correct prior snapshot.
     old_brief = state.get("cached_report", "")
-    last_searched = state.get("last_searched", "")
+    company = state["company_name"]
 
     # No previous cache means this is the first run
     if not old_brief:
+        logger.info("change_detection_node | company=%r | first_run=True", company)
         return {
             "is_first_run": True,
             "changes_detected": [],
@@ -312,6 +411,10 @@ def change_detection_node(state: AgentState) -> dict:
     )
 
     if not old_news or not new_news:
+        logger.info(
+            "change_detection_node | company=%r | skipped (no comparable news sections)",
+            company,
+        )
         return {
             "is_first_run": False,
             "changes_detected": [],
@@ -336,7 +439,6 @@ def change_detection_node(state: AgentState) -> dict:
     if "no significant changes detected" in raw.lower():
         changes: list[str] = []
     else:
-        # Parse bullet lines into a clean list
         changes = [
             line.lstrip("-•* ").strip()
             for line in raw.splitlines()
@@ -344,6 +446,11 @@ def change_detection_node(state: AgentState) -> dict:
         ]
         changes = [c for c in changes if c]
 
+    logger.info(
+        "change_detection_node done | company=%r | changes_found=%d",
+        company,
+        len(changes),
+    )
     return {
         "is_first_run": False,
         "changes_detected": changes,

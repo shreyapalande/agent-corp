@@ -102,6 +102,7 @@ NODE_META = {
     "people_node":           {"label": "Key People",             "icon": "👥"},
     "product_node":          {"label": "Product & Sentiment",    "icon": "📦"},
     "synthesize_node":       {"label": "Synthesizing Brief",     "icon": "🧠"},
+    "validation_node":       {"label": "Validating Report",      "icon": "✅"},
     "change_detection_node": {"label": "Detecting Changes",      "icon": "🔄"},
 }
 
@@ -184,7 +185,7 @@ def run_pipeline(company_name: str) -> dict:
     col_map = {
         "news_node": 0, "funding_node": 0, "techstack_node": 0,
         "competitor_node": 1, "people_node": 1, "product_node": 1,
-        "synthesize_node": 2, "change_detection_node": 2,
+        "synthesize_node": 2, "validation_node": 2, "change_detection_node": 2,
     }
     node_placeholders: dict = {}
     for node_id, meta in NODE_META.items():
@@ -235,6 +236,7 @@ def run_pipeline(company_name: str) -> dict:
         "changes_detected":  data.get("changes", []),
         "is_first_run":      data.get("is_first_run", False),
         "last_searched":     data.get("timestamp", ""),
+        "validation":        data.get("validation", {}),
         "news_results":      raw.get("news", []),
         "funding_results":   raw.get("funding", []),
         "techstack_results": raw.get("techstack", []),
@@ -343,6 +345,63 @@ if analyze_clicked:
                 "</div>",
                 unsafe_allow_html=True,
             )
+
+        # ── Validation banner ─────────────────────────────────────────────────
+        vr = final_state.get("validation", {})
+        v_score = vr.get("overall_score", 1.0)
+        v_ungrounded = vr.get("ungrounded_claims", [])
+        v_incomplete = vr.get("incomplete_sections", [])
+        v_no_data = vr.get("no_data_sections", [])
+
+        if v_score >= 0.8:
+            st.markdown(
+                '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;'
+                'padding:10px 18px;font-size:0.9rem;color:#166534;margin:8px 0;">'
+                f"🟢 <strong>High confidence report</strong> — all claims grounded in sources "
+                f"<span style='float:right;font-weight:600;'>Score: {v_score:.0%}</span>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        elif v_score >= 0.6:
+            st.markdown(
+                '<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;'
+                'padding:10px 18px;font-size:0.9rem;color:#92400e;margin:8px 0;">'
+                f"🟡 <strong>Moderate confidence</strong> — some claims could not be verified "
+                f"<span style='float:right;font-weight:600;'>Score: {v_score:.0%}</span>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;'
+                'padding:10px 18px;font-size:0.9rem;color:#991b1b;margin:8px 0;">'
+                f"🔴 <strong>Low confidence</strong> — verify key claims manually before use "
+                f"<span style='float:right;font-weight:600;'>Score: {v_score:.0%}</span>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+        # Detail expander: show ungrounded claims, incomplete/no-data sections
+        detail_items = len(v_ungrounded) + len(v_incomplete) + len(v_no_data)
+        if detail_items > 0:
+            with st.expander(f"🔍 Validation details ({detail_items} issue{'s' if detail_items != 1 else ''})", expanded=False):
+                if v_ungrounded:
+                    st.markdown("**⚠️ Claims not found in source snippets:**")
+                    for claim in v_ungrounded:
+                        st.markdown(
+                            f'<div style="background:#fef9c3;border-left:3px solid #f59e0b;'
+                            f'padding:6px 12px;margin:4px 0;border-radius:4px;font-size:0.88rem;">'
+                            f"⚠️ {claim}</div>",
+                            unsafe_allow_html=True,
+                        )
+                if v_incomplete:
+                    st.markdown("**❌ Missing sections:**")
+                    for section in v_incomplete:
+                        st.markdown(f"- {section}")
+                if v_no_data:
+                    st.markdown("**📭 Dimensions with no search results:**")
+                    for dim in v_no_data:
+                        st.markdown(f"- {dim}")
 
         st.markdown("---")
 

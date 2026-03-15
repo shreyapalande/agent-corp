@@ -249,6 +249,39 @@ def synthesize_node(state: AgentState) -> dict:
     return {"brief": brief, "all_sources": all_sources}
 
 
+# ── Validation Node ───────────────────────────────────────────────────────────
+
+def validation_node(state: AgentState) -> dict:
+    """
+    Runs after synthesize_node. Checks source grounding, completeness, and staleness.
+    Logs a warning if overall_score < 0.7.
+    """
+    from utils.validator import validate_report
+
+    result = validate_report(
+        brief=state.get("brief", ""),
+        all_sources=state.get("all_sources", []),
+        news_results=state.get("news_results", []),
+        funding_results=state.get("funding_results", []),
+        techstack_results=state.get("techstack_results", []),
+        competitor_results=state.get("competitor_results", []),
+        people_results=state.get("people_results", []),
+        product_results=state.get("product_results", []),
+        groq_api_key=settings.groq_api_key,
+    )
+
+    if result.overall_score < 0.7:
+        print(
+            f"[Validator] ⚠️  Low confidence score {result.overall_score:.2f} for "
+            f"'{state['company_name']}'. "
+            f"Ungrounded: {len(result.ungrounded_claims)}, "
+            f"Incomplete: {result.incomplete_sections}, "
+            f"No-data: {result.no_data_sections}"
+        )
+
+    return {"validation_result": result.to_dict()}
+
+
 # ── Change Detection Node ─────────────────────────────────────────────────────
 
 def change_detection_node(state: AgentState) -> dict:

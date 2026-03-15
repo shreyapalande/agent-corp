@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
 
 from api.config import settings
-from api.schemas import CachedReport, ResearchRequest, ResearchResponse, SourceItem
+from api.schemas import CachedReport, ResearchRequest, ResearchResponse, SourceItem, ValidationResult as ValidationSchema
 from utils.cache import load_report, report_exists
 from utils.export import parse_confidence_scores
 from utils.tracing import configure_tracing
@@ -42,6 +42,7 @@ def _run_graph(company: str) -> dict:
         "cached_report": "",
         "changes_detected": [],
         "last_searched": "",
+        "validation_result": {},
     }
     return graph.invoke(initial_state)
 
@@ -66,6 +67,15 @@ def _build_response(company: str, state: dict) -> ResearchResponse:
         "product":     state.get("product_results", []),
     }
 
+    vr = state.get("validation_result", {})
+    validation = ValidationSchema(
+        is_valid=vr.get("is_valid", True),
+        ungrounded_claims=vr.get("ungrounded_claims", []),
+        incomplete_sections=vr.get("incomplete_sections", []),
+        no_data_sections=vr.get("no_data_sections", []),
+        overall_score=vr.get("overall_score", 1.0),
+    )
+
     return ResearchResponse(
         company=company,
         brief=brief,
@@ -75,6 +85,7 @@ def _build_response(company: str, state: dict) -> ResearchResponse:
         is_first_run=state.get("is_first_run", False),
         timestamp=datetime.now(timezone.utc).isoformat(),
         raw_results=raw_results,
+        validation=validation,
     )
 
 

@@ -28,6 +28,14 @@ class RawResult(BaseModel):
     score: float
 
 
+class ValidationResult(BaseModel):
+    is_valid: bool = True
+    ungrounded_claims: list[str] = []
+    incomplete_sections: list[str] = []
+    no_data_sections: list[str] = []
+    overall_score: float = 1.0
+
+
 class ResearchResponse(BaseModel):
     company: str
     brief: str
@@ -37,6 +45,7 @@ class ResearchResponse(BaseModel):
     is_first_run: bool
     timestamp: str
     raw_results: dict[str, list[RawResult]] | None = None
+    validation: ValidationResult = ValidationResult()
 
 
 class CachedReport(BaseModel):

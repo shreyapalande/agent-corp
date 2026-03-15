@@ -10,6 +10,7 @@ from .nodes import (
     people_node,
     product_node,
     synthesize_node,
+    validation_node,
     change_detection_node,
 )
 
@@ -26,6 +27,7 @@ def build_graph():
     workflow.add_node("people_node", people_node)
     workflow.add_node("product_node", product_node)
     workflow.add_node("synthesize_node", synthesize_node)
+    workflow.add_node("validation_node", validation_node)
     workflow.add_node("change_detection_node", change_detection_node)
 
     # Fan-out: START triggers load_cache_node + all 6 search nodes in parallel
@@ -37,8 +39,9 @@ def build_graph():
     for node in ["load_cache_node", "news_node", "funding_node", "techstack_node", "competitor_node", "people_node", "product_node"]:
         workflow.add_edge(node, "synthesize_node")
 
-    # change_detection_node always runs last, after synthesis
-    workflow.add_edge("synthesize_node", "change_detection_node")
+    # validation_node runs after synthesis, then change_detection_node closes the pipeline
+    workflow.add_edge("synthesize_node", "validation_node")
+    workflow.add_edge("validation_node", "change_detection_node")
     workflow.add_edge("change_detection_node", END)
 
     return workflow.compile()

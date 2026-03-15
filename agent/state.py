@@ -22,3 +22,4 @@ class AgentState(TypedDict):
     cached_report: str
     changes_detected: list[str]
     last_searched: str
+    validation_result: dict

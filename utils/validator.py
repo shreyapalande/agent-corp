@@ -187,13 +187,18 @@ def check_source_grounding(
         )
         try:
             t0 = time.perf_counter()
-            response = call_gemini(prompt, temperature=0.0, max_output_tokens=10)
+            response = call_gemini(prompt, temperature=0.0, max_output_tokens=20)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             usage = response.usage_metadata
             total_prompt_tokens += usage.prompt_token_count
             total_completion_tokens += usage.candidates_token_count
 
-            verdict = response.text.strip().upper()
+            # Safely extract text — finish_reason=MAX_TOKENS can leave parts empty
+            parts = response.candidates[0].content.parts if response.candidates else []
+            if not parts:
+                logger.debug("grounding_check | empty response, skipping claim")
+                continue
+            verdict = parts[0].text.strip().upper()
             logger.debug(
                 "grounding_check | verdict=%s | elapsed_ms=%.0f | claim=%r",
                 verdict,

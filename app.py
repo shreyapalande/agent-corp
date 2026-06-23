@@ -257,7 +257,7 @@ def run_pipeline(company_name: str) -> dict:
 st.markdown('<p class="hero-title">🔍 Agent Corp</p>', unsafe_allow_html=True)
 st.markdown(
     '<p class="hero-sub">Enter a company name and get a full research brief in under a minute — '
-    "powered by Tavily, LangGraph & Groq/Llama-3.3</p>",
+    "powered by Tavily, LangGraph & Gemini Flash 2.5</p>",
     unsafe_allow_html=True,
 )
 st.divider()
@@ -509,7 +509,7 @@ if analyze_clicked:
 
     except ValueError as e:
         st.error(f"**Configuration error:** {e}")
-        st.info("Make sure `TAVILY_API_KEY` and `GROQ_API_KEY` are set in your secrets.")
+        st.info("Make sure `TAVILY_API_KEY` and `GEMINI_API_KEY` are set in your secrets.")
     except Exception as e:
         st.error(f"**Pipeline error:** {e}")
         st.exception(e)

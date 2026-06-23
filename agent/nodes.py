@@ -215,63 +215,47 @@ def product_node(state: AgentState) -> dict:
 
 # ── LLM Helpers (traceable) ───────────────────────────────────────────────────
 
-@traceable(run_type="llm", name="groq_synthesis")
-def _call_groq_synthesis(prompt: str, api_key: str) -> str:
-    """Calls Groq/Llama to synthesize the full sales brief. Traced as an LLM span."""
-    from groq import Groq
-    client = Groq(api_key=api_key)
+@traceable(run_type="llm", name="gemini_synthesis")
+def _call_gemini_synthesis(prompt: str) -> str:
+    """Calls Gemini Flash 2.5 to synthesize the full sales brief. Traced as an LLM span."""
+    from utils.gemini_client import call_gemini
     t0 = time.perf_counter()
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=4000,
-    )
+    response = call_gemini(prompt, temperature=0.3, max_output_tokens=4000)
     elapsed_ms = (time.perf_counter() - t0) * 1000
-    usage = response.usage
+    usage = response.usage_metadata
     logger.info(
-        "LLM call | fn=groq_synthesis | model=llama-3.3-70b-versatile"
+        "LLM call | fn=gemini_synthesis | model=gemini-2.5-flash"
         " | prompt_tokens=%d | completion_tokens=%d | total_tokens=%d | elapsed_ms=%.0f",
-        usage.prompt_tokens,
-        usage.completion_tokens,
-        usage.total_tokens,
+        usage.prompt_token_count,
+        usage.candidates_token_count,
+        usage.total_token_count,
         elapsed_ms,
     )
-    return response.choices[0].message.content
+    return response.text
 
 
-@traceable(run_type="llm", name="groq_change_detection")
-def _call_groq_change_detection(prompt: str, api_key: str) -> str:
-    """Calls Groq/Llama to diff old vs new news. Traced as an LLM span."""
-    from groq import Groq
-    client = Groq(api_key=api_key)
+@traceable(run_type="llm", name="gemini_change_detection")
+def _call_gemini_change_detection(prompt: str) -> str:
+    """Calls Gemini Flash 2.5 to diff old vs new news. Traced as an LLM span."""
+    from utils.gemini_client import call_gemini
     t0 = time.perf_counter()
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-        max_tokens=800,
-    )
+    response = call_gemini(prompt, temperature=0.2, max_output_tokens=800)
     elapsed_ms = (time.perf_counter() - t0) * 1000
-    usage = response.usage
+    usage = response.usage_metadata
     logger.info(
-        "LLM call | fn=groq_change_detection | model=llama-3.3-70b-versatile"
+        "LLM call | fn=gemini_change_detection | model=gemini-2.5-flash"
         " | prompt_tokens=%d | completion_tokens=%d | total_tokens=%d | elapsed_ms=%.0f",
-        usage.prompt_tokens,
-        usage.completion_tokens,
-        usage.total_tokens,
+        usage.prompt_token_count,
+        usage.candidates_token_count,
+        usage.total_token_count,
         elapsed_ms,
     )
-    return response.choices[0].message.content
+    return response.text
 
 
 # ── Synthesis Node ────────────────────────────────────────────────────────────
 
 def synthesize_node(state: AgentState) -> dict:
-    api_key = settings.groq_api_key
-    if not api_key:
-        raise ValueError("GROQ_API_KEY not set in environment")
-
     company = state["company_name"]
     logger.info("synthesize_node started | company=%r", company)
 
@@ -319,7 +303,7 @@ def synthesize_node(state: AgentState) -> dict:
         product_section=_format_section(state.get("product_results", [])),
     )
 
-    brief = _call_groq_synthesis(prompt, api_key)
+    brief = _call_gemini_synthesis(prompt)
 
     # Persist to cache
     from utils.export import parse_confidence_scores
@@ -356,7 +340,6 @@ def validation_node(state: AgentState) -> dict:
         competitor_results=state.get("competitor_results", []),
         people_results=state.get("people_results", []),
         product_results=state.get("product_results", []),
-        groq_api_key=settings.groq_api_key,
     )
 
     log_msg = (
@@ -433,8 +416,7 @@ def change_detection_node(state: AgentState) -> dict:
         "If nothing meaningful changed, say exactly: No significant changes detected."
     )
 
-    api_key = settings.groq_api_key
-    raw = _call_groq_change_detection(change_prompt, api_key).strip()
+    raw = _call_gemini_change_detection(change_prompt).strip()
 
     if "no significant changes detected" in raw.lower():
         changes: list[str] = []

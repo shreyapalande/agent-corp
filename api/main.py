@@ -15,7 +15,7 @@ configure_tracing()
 app = FastAPI(
     title="agent-corp API",
     version=settings.api_version,
-    description="Company research pipeline — powered by LangGraph, Tavily, and Groq.",
+    description="Company research pipeline — powered by LangGraph, Tavily, and Gemini Flash 2.5.",
 )
 
 _executor = ThreadPoolExecutor(max_workers=4)

@@ -17,12 +17,12 @@ from utils.validation_result import ValidationResult
 logger = get_logger(__name__)
 
 REQUIRED_SECTIONS = [
-    "Company Snapshot",
-    "Recent Signals",
-    "Tech Stack",
-    "Funding & Growth",
-    "Key People",
-    "Product Sentiment",
+    "Company Overview",
+    "Recent Activity & Sales Triggers",
+    "Financial Health & Growth Stage",
+    "Tech Stack & Infrastructure Insights",
+    "Product & User Sentiment",
+    "Key Decision Makers",
 ]
 
 _GROUNDING_PROMPT = """\
@@ -46,7 +46,11 @@ Reply with only: GROUNDED or UNGROUNDED\
 """
 
 # Sections whose claims are sent to the grounding check
-_GROUNDING_SECTIONS = frozenset({"Funding & Growth", "Key People", "Recent Signals"})
+_GROUNDING_SECTIONS = frozenset({
+    "Financial Health & Growth Stage",
+    "Key Decision Makers",
+    "Recent Activity & Sales Triggers",
+})
 
 # Sentence-opening phrases that signal a summary or connector — not checkable facts
 _TRANSITION_PHRASES = (
@@ -79,8 +83,8 @@ def _extract_claims(brief: str, max_claims: int) -> list[str]:
     """
     Pull individual checkable claims from the grounding-target sections only.
 
-    Sections checked:   Funding & Growth, Key People, Recent Signals
-    Sections skipped:   Company Snapshot, Tech Stack, Competitor Context (and any other)
+    Sections checked:   Financial Health & Growth Stage, Key Decision Makers, Recent Activity & Sales Triggers
+    Sections skipped:   Company Overview, Tech Stack & Infrastructure Insights, Competitive Position (and any other)
 
     Within target sections, each claim is also skipped when:
     - It has fewer than _MIN_WORDS words
@@ -132,7 +136,6 @@ def _extract_claims(brief: str, max_claims: int) -> list[str]:
 def check_source_grounding(
     brief: str,
     all_sources: list[dict],
-    groq_api_key: str,
     max_sources: int = 15,
     max_claims: int = 20,
 ) -> tuple[list[str], int]:
@@ -146,11 +149,11 @@ def check_source_grounding(
     Returns:
         (ungrounded_claims, checked_count)
         - ungrounded_claims: list of claim strings judged UNGROUNDED
-        - checked_count: number of claims that were actually sent to Groq
+        - checked_count: number of claims that were actually sent to Gemini
           (used as the denominator for the grounding score)
     """
-    if not groq_api_key or not brief or not all_sources:
-        logger.debug("check_source_grounding | skipped (missing api_key, brief, or sources)")
+    if not brief or not all_sources:
+        logger.debug("check_source_grounding | skipped (missing brief or sources)")
         return [], 0
 
     claims = _extract_claims(brief, max_claims)
@@ -170,8 +173,7 @@ def check_source_grounding(
         min(len(all_sources), max_sources),
     )
 
-    from groq import Groq
-    client = Groq(api_key=groq_api_key)
+    from utils.gemini_client import call_gemini
 
     ungrounded: list[str] = []
     total_prompt_tokens = 0
@@ -185,18 +187,13 @@ def check_source_grounding(
         )
         try:
             t0 = time.perf_counter()
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=10,  # only "GROUNDED" or "UNGROUNDED" needed
-            )
+            response = call_gemini(prompt, temperature=0.0, max_output_tokens=10)
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            usage = response.usage
-            total_prompt_tokens += usage.prompt_tokens
-            total_completion_tokens += usage.completion_tokens
+            usage = response.usage_metadata
+            total_prompt_tokens += usage.prompt_token_count
+            total_completion_tokens += usage.candidates_token_count
 
-            verdict = response.choices[0].message.content.strip().upper()
+            verdict = response.text.strip().upper()
             logger.debug(
                 "grounding_check | verdict=%s | elapsed_ms=%.0f | claim=%r",
                 verdict,
@@ -214,7 +211,7 @@ def check_source_grounding(
 
     total_elapsed_ms = (time.perf_counter() - t_start) * 1000
     logger.info(
-        "LLM call | fn=groq_grounding_check | model=llama-3.3-70b-versatile"
+        "LLM call | fn=gemini_grounding_check | model=gemini-2.5-flash"
         " | claims_checked=%d | ungrounded=%d"
         " | prompt_tokens=%d | completion_tokens=%d | total_tokens=%d | elapsed_ms=%.0f",
         len(claims),
@@ -284,21 +281,20 @@ def validate_report(
     competitor_results: list[dict],
     people_results: list[dict],
     product_results: list[dict],
-    groq_api_key: str,
 ) -> ValidationResult:
     """
     Run all three checks and return a ValidationResult.
 
     Scoring:
     - Grounding base: grounded_count / checked_count
-      (only sentences actually sent to Groq count; skipped sentences
+      (only sentences actually sent to Gemini count; skipped sentences
        are excluded from both numerator and denominator)
     - Each missing section   → -0.10
     - Each no-data dimension → -0.05
     """
     logger.debug("validate_report | starting all checks")
 
-    ungrounded, checked_count = check_source_grounding(brief, all_sources, groq_api_key)
+    ungrounded, checked_count = check_source_grounding(brief, all_sources)
     incomplete = check_completeness(brief)
     no_data = check_staleness(
         news_results, funding_results, techstack_results,

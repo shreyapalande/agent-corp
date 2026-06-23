@@ -5,8 +5,8 @@ class Settings(BaseSettings):
     # Search
     tavily_api_key: str = ""
 
-    # LLM
-    groq_api_key: str = ""
+    # LLM — unused at runtime (keys read from env directly); kept for validation tooling
+    gemini_api_key: str = ""
 
     # LangSmith tracing
     langchain_api_key: str = ""
